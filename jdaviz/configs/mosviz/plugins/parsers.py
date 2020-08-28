@@ -201,3 +201,14 @@ def mos_image_parser(app, data_obj, data_labels=None):
         app.data_collection[data_labels[i]] = data_obj[i]
 
     _add_to_table(app, data_labels, 'Images')
+
+
+data_parser_registry("mosviz-nirspec-parser")
+def mos_nirspec_parser(app, data_dir, obs_label=""):
+    p = Path(data_dir)
+    if not p.is_dir():
+        raise ValueError("{} is not a valid directory path".format(data_dir))
+    x1d = list(p.glob("{}*noflat_nooutlierdet_combined_*_x1d.fits".format(obs_label)))
+    s2d = list(p.glob("{}*noflat_nooutlierdet_combined_*_s2d.fits".format(obs_label)))
+
+

@@ -56,6 +56,8 @@ def parse_data(app, file_obj, data_type=None, data_label=None):
     #  into something glue can understand.
     elif isinstance(file_obj, SpectralCube):
         _parse_spectral_cube(app, file_obj, data_type or 'flux', data_label)
+    elif isinstance(file_obj, Spectrum1D) and len(file_obj.shape) == 3:
+        _parse_spectrum1d_3d(app, file_obj)
     elif isinstance(file_obj, Spectrum1D):
         _parse_spectrum1d(app, file_obj)
 
@@ -139,6 +141,11 @@ def _parse_spectral_cube(app, file_obj, data_type='flux', data_label=None):
 
     # TODO: SpectralCube does not store mask information
     # TODO: SpectralCube does not store data quality information
+
+
+def _parse_spectrum1d_3d(app, file_obj):
+    # Load spectrum1d as a cube
+    pass
 
 
 def _parse_spectrum1d(app, file_obj):

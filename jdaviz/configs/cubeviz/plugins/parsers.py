@@ -49,7 +49,8 @@ def parse_data(app, file_obj, data_type=None, data_label=None):
         file_name = os.path.basename(file_obj)
 
         with fits.open(file_obj) as hdulist:
-            _new_parse_hdu(app, hdulist, file_name=data_label or file_name)
+            # hdulist = fits.open(file_obj)
+            _parse_hdu(app, hdulist, file_name=data_label or file_name)
 
     # If the data types are custom data objects, use explicit parsers. Note
     #  that this relies on the glue-astronomy machinery to turn the data object

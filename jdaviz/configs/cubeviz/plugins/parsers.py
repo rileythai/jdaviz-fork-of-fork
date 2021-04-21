@@ -44,12 +44,12 @@ def parse_data(app, file_obj, data_type=None, data_label=None):
     #  generic enough to work with other file types (e.g. ASDF). For now, this
     #  supports MaNGA and JWST data.
     if isinstance(file_obj, fits.hdu.hdulist.HDUList):
-        _parse_hdu(app, file_obj, file_name=data_label)
+        _new_parse_hdu(app, file_obj, file_name=data_label)
     elif isinstance(file_obj, str) and os.path.exists(file_obj):
         file_name = os.path.basename(file_obj)
 
         with fits.open(file_obj) as hdulist:
-            _parse_hdu(app, hdulist, file_name=data_label or file_name)
+            _new_parse_hdu(app, hdulist, file_name=data_label or file_name)
 
     # If the data types are custom data objects, use explicit parsers. Note
     #  that this relies on the glue-astronomy machinery to turn the data object
@@ -60,6 +60,10 @@ def parse_data(app, file_obj, data_type=None, data_label=None):
         _parse_spectrum1d_3d(app, file_obj)
     elif isinstance(file_obj, Spectrum1D):
         _parse_spectrum1d(app, file_obj)
+
+
+def _new_parse_hdu(app, hdulist, fule_name=None):
+    pass
 
 
 def _parse_hdu(app, hdulist, file_name=None):
@@ -78,7 +82,7 @@ def _parse_hdu(app, hdulist, file_name=None):
             continue
 
         try:
-            sc = SpectralCube.read(hdu, format='fits')
+            sc = Spectrum1D.read(hdu)
         except (ValueError, FITSReadError):
             continue
         else:
@@ -96,13 +100,13 @@ def _parse_hdu(app, hdulist, file_name=None):
         # This is supposed to fail on attempting to load anything that
         # isn't cube-shaped. But it's not terribly reliable
         try:
-            sc = SpectralCube.read(hdu, format='fits')
+            sc = Spectrum1D.read(hdu, format="MaNGA cube")
         except (ValueError, OSError):
             # This will fail if the parsing of the wcs does not provide
             # proper celestial axes
             try:
                 hdu.header.update(wcs.to_header())
-                sc = SpectralCube.read(hdu)
+                sc = Spectrum1D.read(hdu, format="MaNGA cube")
             except (ValueError, AttributeError) as e:
                 logging.warn(e)
                 continue

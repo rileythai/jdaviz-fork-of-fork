@@ -4,8 +4,10 @@ import os
 import numpy as np
 from astropy.io import fits
 from spectral_cube import SpectralCube
-from spectral_cube.io.fits import FITSReadError
 from specutils import Spectrum1D
+
+from astropy.wcs import WCS
+from astropy import units as u
 
 from jdaviz.core.registries import data_parser_registry
 
@@ -44,12 +46,11 @@ def parse_data(app, file_obj, data_type=None, data_label=None):
     #  generic enough to work with other file types (e.g. ASDF). For now, this
     #  supports MaNGA and JWST data.
     if isinstance(file_obj, fits.hdu.hdulist.HDUList):
-        _new_parse_hdu(app, file_obj, file_name=data_label)
+        _parse_hdu(app, file_obj, file_name=data_label)
     elif isinstance(file_obj, str) and os.path.exists(file_obj):
         file_name = os.path.basename(file_obj)
 
         with fits.open(file_obj) as hdulist:
-            # hdulist = fits.open(file_obj)
             _parse_hdu(app, hdulist, file_name=data_label or file_name)
 
     # If the data types are custom data objects, use explicit parsers. Note
@@ -63,10 +64,6 @@ def parse_data(app, file_obj, data_type=None, data_label=None):
         _parse_spectrum1d(app, file_obj)
 
 
-def _new_parse_hdu(app, hdulist, fule_name=None):
-    pass
-
-
 def _parse_hdu(app, hdulist, file_name=None):
     if file_name is None:
         if hasattr(hdulist, 'file_name'):
@@ -74,48 +71,33 @@ def _parse_hdu(app, hdulist, file_name=None):
 
     file_name = file_name or "Unknown HDU object"
 
-    # WCS may only exist in a single extension (in this case, just the flux
-    #  flux extention), so first find and store then wcs information.
-    wcs = None
-
-    for hdu in hdulist:
-        if hdu.data is None or not hdu.is_image:
-            continue
-
-        try:
-            sc = Spectrum1D.read(hdu)
-        except (ValueError, FITSReadError):
-            continue
-        else:
-            wcs = sc.wcs
-
     # Now loop through and attempt to parse the fits extensions as spectral
     #  cube object. If the wcs fails to parse in any case, use the wcs
     #  information we scraped above.
     for hdu in hdulist:
         data_label = f"{file_name}[{hdu.name}]"
 
-        if hdu.data is None or not hdu.is_image:
+        if hdu.data is None or not hdu.is_image or len(hdu.data.shape) != 3:
             continue
 
-        # This is supposed to fail on attempting to load anything that
-        # isn't cube-shaped. But it's not terribly reliable
+        wcs = WCS(hdu.header)
+
+        if 'BUNIT' in hdu.header:
+            flux = hdu.data * u.Unit(hdu.header['BUNIT'])
+        else:
+            # TODO Add warning that actual units were not found and using fake ones
+            logging.warn("No flux units found in hdu, using Jansky as a stand-in")
+            flux = hdu.data * u.Jy
+
+        flux = np.moveaxis(flux, 1, 2)
+        flux = np.moveaxis(flux, 0, 1)
+
         try:
-            sc = Spectrum1D.read(hdu, format="MaNGA cube")
-        except (ValueError, OSError):
-            # This will fail if the parsing of the wcs does not provide
-            # proper celestial axes
-            try:
-                hdu.header.update(wcs.to_header())
-                sc = Spectrum1D.read(hdu, format="MaNGA cube")
-            except (ValueError, AttributeError) as e:
-                logging.warn(e)
-                continue
-        except FITSReadError as e:
+            sc = Spectrum1D(flux=flux, wcs=wcs)
+            app.data_collection[data_label] = sc
+        except Exception as e:
             logging.warn(e)
             continue
-
-        app.data_collection[data_label] = sc
 
         # If the data type is some kind of integer, assume it's the mask/dq
         if hdu.data.dtype in (np.int, np.uint, np.uint32) or \

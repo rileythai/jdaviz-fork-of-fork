@@ -84,7 +84,7 @@ def _parse_hdu(app, hdulist, file_name=None):
 
         try:
             flux_unit = u.Unit(hdu.header['BUNIT'])
-        except KeyError as e:
+        except KeyError:
             logging.warn("No flux units found in hdu, using Jansky as a stand-in")
             flux_unit = u.Jy
         finally:

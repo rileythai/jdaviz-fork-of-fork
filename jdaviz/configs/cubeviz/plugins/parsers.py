@@ -82,12 +82,13 @@ def _parse_hdu(app, hdulist, file_name=None):
 
         wcs = WCS(hdu.header)
 
-        if 'BUNIT' in hdu.header:
-            flux = hdu.data * u.Unit(hdu.header['BUNIT'])
-        else:
-            # TODO Add warning that actual units were not found and using fake ones
+        try:
+            flux_unit = u.Unit(hdu.header['BUNIT'])
+        except KeyError as e:
             logging.warn("No flux units found in hdu, using Jansky as a stand-in")
-            flux = hdu.data * u.Jy
+            flux_unit = u.Jy
+        finally:
+            flux = hdu.data * flux_unit
 
         flux = np.moveaxis(flux, 1, 2)
         flux = np.moveaxis(flux, 0, 1)
@@ -132,7 +133,31 @@ def _parse_spectral_cube(app, file_obj, data_type='flux', data_label=None):
 
 def _parse_spectrum1d_3d(app, file_obj):
     # Load spectrum1d as a cube
-    pass
+
+    for attr in ["flux", "mask", "uncertainty"]:
+        if attr == "mask":
+            flux = getattr(file_obj, attr) * file_obj.flux.unit
+        elif attr == "uncertainty":
+            flux = getattr(file_obj, attr)
+            flux = u.Quantity(flux.array) * file_obj.flux.unit
+        else:
+            flux = getattr(file_obj, attr)
+
+        flux = np.moveaxis(flux, 1, 2)
+        flux = np.moveaxis(flux, 0, 1)
+
+        s1d = Spectrum1D(flux=flux, wcs=file_obj.wcs)
+
+        data_label = f"Unknown spectrum object[{attr}]"
+        app.data_collection[data_label] = s1d
+
+        if attr == 'flux':
+            app.add_data_to_viewer('flux-viewer', f"{data_label}")
+            app.add_data_to_viewer('spectrum-viewer', f"{data_label}")
+        elif attr == 'mask':
+            app.add_data_to_viewer('mask-viewer', f"{data_label}")
+        elif attr == 'uncertainty':
+            app.add_data_to_viewer('uncert-viewer', f"{data_label}")
 
 
 def _parse_spectrum1d(app, file_obj):

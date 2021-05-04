@@ -85,13 +85,10 @@ def _parse_hdu(app, hdulist, file_name=None):
         try:
             flux_unit = u.Unit(hdu.header['BUNIT'])
         except KeyError:
-            logging.warn("No flux units found in hdu, using Jansky as a stand-in")
-            flux_unit = u.Jy
+            logging.warn("No flux units found in hdu, using u.count as a stand-in")
+            flux_unit = u.count
         finally:
             flux = hdu.data * flux_unit
-
-        flux = np.moveaxis(flux, 1, 2)
-        flux = np.moveaxis(flux, 0, 1)
 
         try:
             sc = Spectrum1D(flux=flux, wcs=wcs)
@@ -112,6 +109,23 @@ def _parse_hdu(app, hdulist, file_name=None):
         if any(x in hdu.name.lower() for x in EXT_TYPES['flux']):
             app.add_data_to_viewer('flux-viewer', data_label)
             app.add_data_to_viewer('spectrum-viewer', data_label)
+
+    _fix_viewers(app)
+
+
+def _fix_viewers(app):
+    # Calibrate viewers to work with the updated Spectrum1D that can handle
+    # cubes. This needs to be done because the shape is different from
+    # SpectralCube, which was used previously.
+    # Setting the y and x axes needs to happen in this order to avoid an
+    # error for setting both axes to the same value.
+    app.get_viewer("mask-viewer").viewer_options.y_att_world_selected = 0
+    app.get_viewer("mask-viewer").viewer_options.x_att_world_selected = 1
+    app.get_viewer("uncert-viewer").viewer_options.y_att_world_selected = 0
+    app.get_viewer("uncert-viewer").viewer_options.x_att_world_selected = 1
+    app.get_viewer("flux-viewer").viewer_options.y_att_world_selected = 0
+    app.get_viewer("flux-viewer").viewer_options.x_att_world_selected = 1
+    app.get_viewer("spectrum-viewer").viewer_options.x_att_selected = 5
 
 
 def _parse_spectral_cube(app, file_obj, data_type='flux', data_label=None):
@@ -143,9 +157,6 @@ def _parse_spectrum1d_3d(app, file_obj):
         else:
             flux = getattr(file_obj, attr)
 
-        flux = np.moveaxis(flux, 1, 2)
-        flux = np.moveaxis(flux, 0, 1)
-
         s1d = Spectrum1D(flux=flux, wcs=file_obj.wcs)
 
         data_label = f"Unknown spectrum object[{attr}]"
@@ -158,6 +169,8 @@ def _parse_spectrum1d_3d(app, file_obj):
             app.add_data_to_viewer('mask-viewer', f"{data_label}")
         elif attr == 'uncertainty':
             app.add_data_to_viewer('uncert-viewer', f"{data_label}")
+
+    _fix_viewers(app)
 
 
 def _parse_spectrum1d(app, file_obj):

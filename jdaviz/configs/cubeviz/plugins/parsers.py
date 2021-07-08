@@ -90,7 +90,7 @@ def _parse_hdu(app, hdulist, file_name=None):
         finally:
             flux = hdu.data * flux_unit
 
-        flux = np.moveaxis(flux, 1, 2)
+        #flux = np.moveaxis(flux, 1, 2)
 
         try:
             sc = Spectrum1D(flux=flux, wcs=wcs)
@@ -112,7 +112,7 @@ def _parse_hdu(app, hdulist, file_name=None):
             app.add_data_to_viewer('flux-viewer', data_label)
             app.add_data_to_viewer('spectrum-viewer', data_label)
 
-    _fix_axes(app)
+    # _fix_axes(app)
 
 
 def _fix_axes(app):
@@ -150,6 +150,8 @@ def _parse_spectral_cube(app, file_obj, data_type='flux', data_label=None):
 def _parse_spectrum1d_3d(app, file_obj):
     # Load spectrum1d as a cube
 
+    print("Parsing Spectrum1D!")
+
     for attr in ["flux", "mask", "uncertainty"]:
         if attr == "mask":
             flux = getattr(file_obj, attr) * file_obj.flux.unit
@@ -159,7 +161,7 @@ def _parse_spectrum1d_3d(app, file_obj):
         else:
             flux = getattr(file_obj, attr)
 
-        flux = np.moveaxis(flux, 1, 0)
+        # flux = np.moveaxis(flux, 1, 0)
 
         s1d = Spectrum1D(flux=flux, wcs=file_obj.wcs)
 

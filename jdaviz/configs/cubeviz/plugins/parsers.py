@@ -114,7 +114,6 @@ def _parse_hdu(app, hdulist, file_name=None):
 
     # _fix_axes(app)
 
-
 def _fix_axes(app):
     # Calibrate viewers to work with the updated Spectrum1D that can handle
     # cubes. This needs to be done because the shape is different from

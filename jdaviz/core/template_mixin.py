@@ -607,7 +607,7 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
             manual_options = [default_text] + manual_options
         self._manual_options = manual_options
 
-        self.items = [{"label": opt} for opt in manual_options]
+        self.items = self.manual_items
         # set default values for traitlets
         if default_text is not None:
             self.selected = default_text
@@ -711,6 +711,10 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
     def manual_options(self):
         return self._manual_options
         # read-only access to manual options (cannot change after init)
+
+    @property
+    def manual_items(self):
+        return [{"label": opt} for opt in self.manual_options]
 
     @property
     def cached_properties(self):
@@ -1605,7 +1609,8 @@ class SubsetSelect(SelectPluginComponent):
 
         self._cached_properties += ["selected_subset_state",
                                     "selected_spatial_region",
-                                    "selected_subset_mask"]
+                                    "selected_subset_mask",
+                                    "selected_subset_group"]
         if dataset is not None:
             # clear selected_subset_mask and selected_spatial_region on change to dataset
             self.add_observe(self.dataset._plugin_traitlets['selected'],
@@ -1620,8 +1625,8 @@ class SubsetSelect(SelectPluginComponent):
                            handler=lambda msg: self._delete_subset(msg.subset))
 
         # intialize any subsets that have already been created
-        for lyr in self.app.data_collection.subset_groups:
-            self._update_subset(lyr)
+        self.items = self.manual_items + [self._subset_to_dict(s) for s in
+                                          self.app.data_collection.subset_groups]
 
     def _selected_changed(self, event):
         super()._selected_changed(event)
@@ -1666,12 +1671,24 @@ class SubsetSelect(SelectPluginComponent):
         return super()._is_valid_item(subset, locals())
 
     def _update_subset(self, subset, attribute=None):
+        if attribute == 'label':
+            selected = self.selected
+            # then rebuild the whole items list
+            self.items = self.manual_items + [self._subset_to_dict(s) for s in
+                                              self.app.data_collection.subset_groups]
+            # check to see if the original selection is no longer in the list, and
+            # if so, assume the selected entry was renamed and select that
+            if selected not in self.labels:
+                self.selected = subset.label
+            return
+
         if subset.label not in self.labels:
             # NOTE: this logic will need to be revisited if generic renaming of subsets is added
             # see https://github.com/spacetelescope/jdaviz/pull/1175#discussion_r829372470
             if subset.label.startswith('Subset') and self._is_valid_item(subset):
                 # NOTE: += will not trigger traitlet update
                 self.items = self.items + [self._subset_to_dict(subset)]  # noqa
+
         else:
             # 'type' can be passed manually rather than coming from SubsetUpdateMessage.attribute
             if attribute in ('style', 'type'):
@@ -1688,8 +1705,7 @@ class SubsetSelect(SelectPluginComponent):
             ((self.is_multiselect and subset.label in self.selected)
              or (subset.label == self.selected))):
             # updated the currently selected subset
-            self._clear_cache("selected_obj", "selected_item", "selected_subset_state",
-                              "selected_subset_mask", "selected_subset", "selected_spatial_region")
+            self._clear_cache(*self._cached_properties)
             self._update_has_subregions()
 
     def _update_has_subregions(self):
@@ -1727,6 +1743,26 @@ class SubsetSelect(SelectPluginComponent):
         if len(subset_group) != 1:  # pragma: no cover
             raise ValueError("found multiple matches for subset")
         return subset_group[0].subset_state
+
+    @cached_property
+    def selected_subset_group(self):
+        for subset_group in self.app.data_collection.subset_groups:
+            if subset_group.label == self.selected:
+                return subset_group
+
+    def rename_selected(self, new_name):
+        if new_name in self.labels:
+            raise ValueError(f"{new_name} is already a named subset")
+        if new_name in ['Entire Spectrum', 'Surrounding']:
+            # these are names used in various subset dropdowns for other meanings
+            raise ValueError(f"{new_name} is a reserved name")
+
+        subset_group = self.selected_subset_group
+        if subset_group is None:
+            raise TypeError("current selection is not a subset")
+
+        # this will trigger the SubsetUpdateMessage
+        subset_group.label = new_name
 
     @cached_property
     def selected_subset_state(self):

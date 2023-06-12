@@ -50,7 +50,7 @@
       <j-tooltip tipid='viewer-data-delete'>
         <v-btn
           icon
-          @click="$emit('data-item-remove', {item_name: item.name})"
+          @click="$emit('data-item-remove', {item_name: item.name, viewer_id: viewer.id})"
         ><v-icon>mdi-delete</v-icon></v-btn>
       </j-tooltip>
     </div>
@@ -60,7 +60,7 @@
 <script>
 
 module.exports = {
-  props: ['item', 'icon', 'multi_select', 'viewer'],
+  props: ['item', 'icon', 'multi_select', 'viewer', 'n_data_entries'],
   methods: {
     selectClicked() {
       prevVisibleState = this.visibleState
@@ -114,14 +114,15 @@ module.exports = {
         // forbid unloading the original reference cube
         // this logic might need to be generalized if supporting custom data labels
         // per-cube or renaming data labels
+        const extension = this.itemNameExtension
         if (this.$props.viewer.reference === 'flux-viewer') {
-          return this.$props.item.name.indexOf('[FLUX]') === -1
+          return ['SCI', 'FLUX'].indexOf(extension) !== -1
         } else if (this.$props.viewer.reference === 'uncert-viewer') {
-          return this.$props.item.name.indexOf('[IVAR]') === -1
+          return ['IVAR', 'ERR'].indexOf(extension) !== -1
         } else if (this.$props.viewer.reference === 'mask-viewer') {
-          return this.$props.item.name.indexOf('[MASK]') === -1
+          return ['MASK', 'DQ'].indexOf(extension) !== -1
         } else if (this.$props.viewer.reference === 'spectrum-viewer') {
-          return this.$props.item.name.indexOf('[FLUX]') === -1          
+          return ['SCI', 'FLUX'].indexOf(extension) !== -1
         }
       } else if (this.$props.viewer.config === 'specviz2d') {
         if (this.$props.viewer.reference === 'spectrum-2d-viewer') {
@@ -133,14 +134,12 @@ module.exports = {
       return true
     },
     isDeletable() {
-      // only allow deleting products from plugins.  We might want to allow some non-plugin
-      // data to also be deleted in the future, but would probably need more advanced logic
-      // to ensure essential data isn't removed that would break the app.
-      if (this.$props.item.meta.Plugin === undefined) {
-        return false
-      }
-      // for any exceptions not above, enable deleting
-      return !this.isSelected
+      isLastDataset = (this.$props.n_data_entries <= 1)
+      notSelected = !this.isSelected
+      isMosviz = this.$props.viewer.config === 'mosviz'
+      isCubeviz = this.$props.viewer.config === 'cubeviz'
+      isPluginData = !(this.$props.item.meta.Plugin === undefined)
+      return notSelected && (isPluginData || (!isLastDataset && !isMosviz && !isCubeviz))
     },
     selectTipId() {
       if (this.multi_select) {

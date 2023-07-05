@@ -80,7 +80,7 @@ jobs:
     - name: Notary step + stapling (OSX)
       if: ${{ matrix.os == 'macos' }}
       run: |
-        output=$(xcrun notarytool submit standalone/dist/jdaviz.dmg --apple-id ${{ secrets.NOTARIZATION_USERNAME }} --team-id ${{ secrets.TEAM_ID }} --wait --password ${{ secrets.NOTARIZATION_PASSWORD }}) || true
+        output=$(xcrun notarytool submit standalone/dist/jdaviz.dmg --apple-id ${{ secrets.NOTARIZATION_USERNAME }} --team-id ${{ secrets.NOTARIZATION_TEAM_ID }} --wait --password ${{ secrets.NOTARIZATION_PASSWORD }}) || true
         echo "$output"
         uuid=$(echo "$output" | awk -F '[ :]+' '/id:/ {print $3; exit}')
         echo "UUID: $uuid"

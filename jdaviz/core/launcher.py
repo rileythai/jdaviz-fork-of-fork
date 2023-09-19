@@ -216,4 +216,5 @@ def show_launcher(configs=ALL_JDAVIZ_CONFIGS, filepath='', height='450px'):
                    _metadata={'mount_id': 'content'})
     main.children = [Launcher(main, configs, filepath, height)]
 
-    show_widget(main, loc='inline', title=None)
+    #show_widget(main, loc='inline', title=None)
+    return main

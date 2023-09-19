@@ -27,6 +27,7 @@ def Page(layout):
 
         ipyvue.register_component_from_file('g-viewer-tab', "container.vue", jdaviz.__file__)
 
-        viz = viz_helpers[layout]
-        viz.load_data(f'{data_dir}/{fn}')
+        viz = viz_helpers[layout]()
+        
+        #viz.load_data(f'{data_dir}/{fn}')
         display(viz.app)

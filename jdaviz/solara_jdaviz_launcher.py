@@ -4,7 +4,7 @@ from jdaviz.core.launcher import show_launcher
 
 
 @solara.component
-def Page(layout):
+def Page():
     with solara.Column():
         import ipysplitpanes
         import ipygoldenlayout

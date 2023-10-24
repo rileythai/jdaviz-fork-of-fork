@@ -3,6 +3,7 @@ import numpy as np
 import astropy.units as u
 from astropy.wcs.utils import pixel_to_pixel
 from astropy.visualization import ImageNormalize, LinearStretch, PercentileInterval
+from glue.core.link_helpers import LinkSame
 from glue_jupyter.bqplot.image import BqplotImageView
 
 from jdaviz.configs.imviz import wcs_utils
@@ -209,7 +210,7 @@ class ImvizImageView(JdavizViewerMixin, BqplotImageView, AstrowidgetsImageViewer
         image, which can be inaccurate if given image is dithered and
         they are linked by WCS.
         """
-        if data_has_valid_wcs(image) and self.get_link_type(image.label) == 'wcs':
+        if self.state.reference_data.meta.get('_WCS_ONLY', False):
             # Convert X,Y from reference data to the one we are actually seeing.
             x = image.coords.world_to_pixel(self.state.reference_data.coords.pixel_to_world(
                 (self.state.x_min, self.state.x_min, self.state.x_max, self.state.x_max),
@@ -280,15 +281,52 @@ class ImvizImageView(JdavizViewerMixin, BqplotImageView, AstrowidgetsImageViewer
         if len(self.session.application.data_collection) == 0:
             raise ValueError('No reference data for link look-up')
 
-        # TODO: Brett Morris might want to look at this for
-        # https://github.com/spacetelescope/jdaviz/pull/2179
-        #     ref_label = self.state.reference_data ???
-        #
-        # The original links were created against data_collection[0], not necessarily
-        # against the current viewer reference_data
-        ref_label = self.session.application.data_collection[0].label
+        ref_label = self.state.reference_data.label
+        if data_label == ref_label:
+            return 'self'
 
-        return self.jdaviz_helper.get_link_type(ref_label, data_label)
+        if ref_label in self.state.wcs_only_layers:
+            return 'wcs'
+
+        link_type = None
+        for elink in self.session.application.data_collection.external_links:
+            elink_labels = (elink.data1.label, elink.data2.label)
+            if data_label in elink_labels and ref_label in elink_labels:
+                if isinstance(elink, LinkSame):  # Assumes WCS link never uses LinkSame
+                    link_type = 'pixels'
+                else:  # If not pixels, must be WCS
+                    link_type = 'wcs'
+                break  # Might have duplicate, just grab first match
+
+        if link_type is None:
+            raise ValueError(f'{data_label} not found in data collection external links')
+
+        return link_type
+
+    def _get_fov(self, data):
+        # compute the mean of the height and width of the
+        # viewer's FOV on ``data`` in world units:
+        x_corners = [
+            self.state.x_min,
+            self.state.x_max,
+            self.state.x_min,
+            self.state.x_max
+        ]
+        y_corners = [
+            self.state.y_min,
+            self.state.y_min,
+            self.state.y_max,
+            self.state.y_max
+        ]
+
+        y_corners, x_corners = self._get_real_xy(
+            data, x_corners, y_corners
+        )[:2]
+        sky_corners = data.coords.pixel_to_world(x_corners * u.pix, y_corners * u.pix)
+        height_sky = abs(sky_corners[0].separation(sky_corners[2]))
+        width_sky = abs(sky_corners[0].separation(sky_corners[1]))
+        fov_sky = u.Quantity([height_sky, width_sky]).mean()
+        return fov_sky
 
     def _get_center_skycoord(self, data=None):
         if data is None:

@@ -8,7 +8,7 @@ __all__ = ['NewViewerMessage', 'ViewerAddedMessage', 'ViewerRemovedMessage', 'Lo
            'SliceToolStateMessage',
            'TableClickMessage', 'LinkUpdatedMessage', 'ExitBatchLoadMessage',
            'MarkersChangedMessage', 'CanvasRotationChangedMessage',
-           'GlobalDisplayUnitChanged']
+           'GlobalDisplayUnitChanged', 'ChangeRefDataMessage']
 
 
 class NewViewerMessage(Message):
@@ -127,6 +127,32 @@ class RemoveDataMessage(Message):
     @property
     def viewer_id(self):
         return self._viewer_id
+
+
+class ChangeRefDataMessage(Message):
+    def __init__(self, data, viewer, viewer_id=None, old=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._data = data
+        self._viewer = viewer
+        self._viewer_id = viewer_id
+        self._old = old
+
+    @property
+    def data(self):
+        return self._data
+
+    @property
+    def viewer(self):
+        return self._viewer
+
+    @property
+    def viewer_id(self):
+        return self._viewer_id
+
+    @property
+    def old(self):
+        return self._old
 
 
 class SnackbarMessage(Message):

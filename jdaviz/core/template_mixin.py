@@ -1200,7 +1200,8 @@ class LayerSelect(SelectPluginComponent):
     def __init__(self, plugin, items, selected, viewer,
                  multiselect=None,
                  default_text=None, manual_options=[],
-                 default_mode='first'):
+                 default_mode='first',
+                 only_wcs_layers=False):
         """
         Parameters
         ----------
@@ -1221,6 +1222,7 @@ class LayerSelect(SelectPluginComponent):
             ``default`` text is provided but not in ``manual_options`` it will still be included as
             the first item in the list.
         """
+
         super().__init__(plugin,
                          items=items,
                          selected=selected,
@@ -1229,6 +1231,8 @@ class LayerSelect(SelectPluginComponent):
                          default_text=default_text,
                          manual_options=manual_options,
                          default_mode=default_mode)
+
+        self.only_wcs_layers = only_wcs_layers
 
         self.hub.subscribe(self, AddDataMessage,
                            handler=lambda _: self._on_layers_changed())
@@ -1281,7 +1285,26 @@ class LayerSelect(SelectPluginComponent):
         viewers = [self._get_viewer(viewer) for viewer in viewer_names]
 
         manual_items = [{'label': label} for label in self.manual_options]
-        layers = [layer for viewer in viewers for layer in getattr(viewer, 'layers', [])]
+
+        # use getattr so the super() call above doesn't try to access the attr before
+        # it is initialized:
+        if not getattr(self, 'only_wcs_layers', False):
+            layers = [
+                layer for viewer in viewers
+                for layer in getattr(viewer, 'layers', [])
+                # don't include WCS-only layers unless asked:
+                if (
+                    not hasattr(layer.layer, 'meta') or
+                    (not layer.layer.meta.get('_WCS_ONLY', False))
+                )
+            ]
+        else:
+            layers = [
+                layer for viewer in viewers
+                for layer in getattr(viewer, 'layers', [])
+                # only include WCS-only layers:
+                if not hasattr(layer.layer, 'meta') or layer.layer.meta.get('_WCS_ONLY', False)
+            ]
         # remove duplicates - NOTE: by doing this, any color-mismatch between layers with the
         # same name in different viewers will be randomly assigned within plot_options
         # based on which was found _first.
@@ -2085,7 +2108,7 @@ class DatasetSelect(SelectPluginComponent):
     """
     def __init__(self, plugin, items, selected,
                  multiselect=None,
-                 filters=['not_from_plugin_model_fitting', 'layer_in_viewers'],
+                 filters=['not_from_plugin_model_fitting', 'layer_in_viewers', 'is_not_wcs_only'],
                  default_text=None, manual_options=[],
                  default_mode='first'):
         """
@@ -2241,6 +2264,9 @@ class DatasetSelect(SelectPluginComponent):
 
         def is_cube(data):
             return len(data.shape) == 3
+
+        def is_not_wcs_only(data):
+            return not data.meta.get(self.app._wcs_only_label, False)
 
         return super()._is_valid_item(data, locals())
 

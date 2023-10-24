@@ -1303,7 +1303,8 @@ class LayerSelect(SelectPluginComponent):
                 layer for viewer in viewers
                 for layer in getattr(viewer, 'layers', [])
                 # only include WCS-only layers:
-                if not hasattr(layer.layer, 'meta') or layer.layer.meta.get('_WCS_ONLY', False)
+                if (not hasattr(layer.layer, 'meta') or layer.layer.meta.get('_WCS_ONLY', False))
+                and "Subset" not in layer.layer.label
             ]
         # remove duplicates - NOTE: by doing this, any color-mismatch between layers with the
         # same name in different viewers will be randomly assigned within plot_options

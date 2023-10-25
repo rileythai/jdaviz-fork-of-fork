@@ -5,12 +5,11 @@ import pytest
 from astropy import units as u
 from astropy.tests.helper import assert_quantity_allclose
 from glue.core.roi import XRangeROI
-from glue.core.edit_subset_mode import OrMode
+from glue.core.edit_subset_mode import OrMode, AndMode, AndNotMode
 from specutils import Spectrum1D, SpectrumList, SpectrumCollection
 from astropy.utils.data import download_file
 
 from jdaviz.app import Application
-from jdaviz.configs.specviz.plugins.unit_conversion import unit_conversion as uc
 from jdaviz.core.marks import LineUncertainties
 from jdaviz import Specviz
 
@@ -24,7 +23,7 @@ class TestSpecvizHelper:
         self.multi_order_spectrum_list = multi_order_spectrum_list
 
         self.label = "Test 1D Spectrum"
-        self.spec_app.load_spectrum(spectrum1d, data_label=self.label)
+        self.spec_app.load_data(spectrum1d, data_label=self.label)
 
     def test_load_spectrum1d(self):
         # starts with a single loaded spectrum1d object:
@@ -33,14 +32,13 @@ class TestSpecvizHelper:
         assert dc_0.label == self.label
         assert dc_0.meta['uncertainty_type'] == 'std'
 
-        data = self.spec_app.app.get_data_from_viewer('spectrum-viewer')
+        data = self.spec_app.get_data()
 
-        assert isinstance(list(data.values())[0], Spectrum1D)
-        assert list(data.keys())[0] == self.label
+        assert isinstance(data, Spectrum1D)
 
     def test_load_spectrum_list_no_labels(self):
         # now load three more spectra from a SpectrumList, without labels
-        self.spec_app.load_spectrum(self.spec_list)
+        self.spec_app.load_data(self.spec_list)
         assert len(self.spec_app.app.data_collection) == 4
         for i in (1, 2, 3):
             assert "specviz_data" in self.spec_app.app.data_collection[i].label
@@ -48,24 +46,24 @@ class TestSpecvizHelper:
     def test_load_spectrum_list_with_labels(self):
         # now load three more spectra from a SpectrumList, with labels:
         labels = ["List test 1", "List test 2", "List test 3"]
-        self.spec_app.load_spectrum(self.spec_list, data_label=labels)
+        self.spec_app.load_data(self.spec_list, data_label=labels)
         assert len(self.spec_app.app.data_collection) == 4
 
     def test_load_multi_order_spectrum_list(self):
         assert len(self.spec_app.app.data_collection) == 1
         # now load ten spectral orders from a SpectrumList:
-        self.spec_app.load_spectrum(self.multi_order_spectrum_list)
+        self.spec_app.load_data(self.multi_order_spectrum_list)
         assert len(self.spec_app.app.data_collection) == 11
 
     def test_mismatched_label_length(self):
         with pytest.raises(ValueError, match='Length'):
             labels = ["List test 1", "List test 2"]
-            self.spec_app.load_spectrum(self.spec_list, data_label=labels)
+            self.spec_app.load_data(self.spec_list, data_label=labels)
 
     def test_load_spectrum_collection(self):
         with pytest.raises(TypeError):
             collection = SpectrumCollection([1]*u.AA)
-            self.spec_app.load_spectrum(collection)
+            self.spec_app.load_data(collection)
 
     def test_get_spectra(self):
         with pytest.warns(UserWarning, match='Applying the value from the redshift slider'):
@@ -136,28 +134,89 @@ class TestSpecvizHelper:
         assert_quantity_allclose(spec_region['Subset 1'].subregions[0][0].value,
                                  6000., atol=1e-5)
         assert_quantity_allclose(spec_region['Subset 1'].subregions[0][1].value,
-                                 6222.22222222, atol=1e-5)
+                                 6400., atol=1e-5)
 
         assert_quantity_allclose(spec_region['Subset 1'].subregions[1][0].value,
-                                 6666.66666667, atol=1e-5)
+                                 6600., atol=1e-5)
         assert_quantity_allclose(spec_region['Subset 1'].subregions[1][1].value,
-                                 6888.88888889, atol=1e-5)
+                                 7000., atol=1e-5)
 
         assert_quantity_allclose(spec_region['Subset 1'].subregions[2][0].value,
-                                 7333.33333333, atol=1e-5)
+                                 7300., atol=1e-5)
         assert_quantity_allclose(spec_region['Subset 1'].subregions[2][1].value,
-                                 7777.77777778, atol=1e-5)
+                                 7800., atol=1e-5)
 
-    def test_get_spectral_regions_raise_value_error(self):
-        with pytest.raises(ValueError):
-            spectrum_viewer = self.spec_app.app.get_viewer("spectrum-viewer")
+    def test_get_spectral_regions_does_not_raise_value_error(self):
+        spectrum_viewer = self.spec_app.app.get_viewer("spectrum-viewer")
 
-            spectrum_viewer.session.edit_subset_mode._mode = OrMode
-            # Selecting ROIs that are not part of the actual spectrum raises an error
-            self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(1, 3))
-            self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(4, 6))
+        spectrum_viewer.session.edit_subset_mode._mode = OrMode
+        # Selecting ROIs that are not part of the actual spectrum no longer raises an error
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(1, 3))
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(4, 6))
 
-            self.spec_app.get_spectral_regions()
+        spec_region = self.spec_app.get_spectral_regions()
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[0][0].value,
+                                 1, atol=1e-5)
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[0][1].value,
+                                 3, atol=1e-5)
+
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[1][0].value,
+                                 4, atol=1e-5)
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[1][1].value,
+                                 6, atol=1e-5)
+
+    def test_get_spectral_regions_composite_region(self):
+        spectrum_viewer = self.spec_app.app.get_viewer("spectrum-viewer")
+
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(6000, 7400))
+
+        spectrum_viewer.session.edit_subset_mode._mode = AndNotMode
+
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(6600, 7000))
+
+        spectrum_viewer.session.edit_subset_mode._mode = AndMode
+
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(7300, 7800))
+
+        spec_region = self.spec_app.get_spectral_regions()
+
+        assert len(spec_region['Subset 1'].subregions) == 1
+        # Assert correct values for test with 3 subregions
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[0][0].value,
+                                 7300., atol=1e-5)
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[0][1].value,
+                                 7400., atol=1e-5)
+
+    def test_get_spectral_regions_composite_region_multiple_and_nots(self):
+        spectrum_viewer = self.spec_app.app.get_viewer("spectrum-viewer")
+
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(6000, 7800))
+
+        spectrum_viewer.session.edit_subset_mode._mode = AndNotMode
+
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(6200, 6600))
+
+        spectrum_viewer.session.edit_subset_mode._mode = AndNotMode
+
+        self.spec_app.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(7300, 7700))
+
+        spec_region = self.spec_app.get_spectral_regions()
+
+        assert len(spec_region['Subset 1'].subregions) == 3
+        # Assert correct values for test with 3 subregions
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[0][0].value,
+                                 6000., atol=1e-5)
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[0][1].value,
+                                 6200., atol=1e-5)
+
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[1][0].value,
+                                 6600., atol=1e-5)
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[1][1].value,
+                                 7300., atol=1e-5)
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[2][0].value,
+                                 7700., atol=1e-5)
+        assert_quantity_allclose(spec_region['Subset 1'].subregions[2][1].value,
+                                 7800., atol=1e-5)
 
 
 def test_get_spectra_no_spectra(specviz_helper, spectrum1d):
@@ -186,22 +245,22 @@ def test_get_spectra_no_spectra_label_redshift_error(specviz_helper, spectrum1d)
 
 
 def test_add_spectrum_after_subset(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d, data_label="test")
+    specviz_helper.load_data(spectrum1d, data_label="test")
     specviz_helper.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(6200, 7000))
     new_spec = specviz_helper.get_spectra(apply_slider_redshift=True)["test"]*0.9
-    specviz_helper.load_spectrum(new_spec, data_label="test2")
+    specviz_helper.load_data(new_spec, data_label="test2")
 
 
 def test_get_spectral_regions_unit(specviz_helper, spectrum1d):
     # Ensure units we put in are the same as the units we get out
-    specviz_helper.load_spectrum(spectrum1d)
+    specviz_helper.load_data(spectrum1d)
     specviz_helper.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(6200, 7000))
 
     subsets = specviz_helper.get_spectral_regions()
     reg = subsets.get('Subset 1')
 
-    assert spectrum1d.wavelength.unit == reg.lower.unit
-    assert spectrum1d.wavelength.unit == reg.upper.unit
+    assert spectrum1d.spectral_axis.unit == reg.lower.unit
+    assert spectrum1d.spectral_axis.unit == reg.upper.unit
 
 
 def test_get_spectral_regions_unit_conversion(specviz_helper, spectrum1d):
@@ -216,7 +275,7 @@ def test_get_spectral_regions_unit_conversion(specviz_helper, spectrum1d):
 
     # If the reference (visible) data changes via unit conversion,
     # check that the region's units convert too
-    specviz_helper.load_spectrum(spectrum1d)
+    specviz_helper.load_data(spectrum1d)  # Originally Angstrom
 
     # Also check coordinates info panel.
     # x=0 -> 6000 A, x=1 -> 6222.222 A
@@ -232,26 +291,22 @@ def test_get_spectral_regions_unit_conversion(specviz_helper, spectrum1d):
     assert label_mouseover.as_text() == ('', '', '')
     assert label_mouseover.icon == ''
 
-    # Convert the wavelength axis to microns
-    new_spectral_axis = "micron"
-    conv_func = uc.UnitConversion.process_unit_conversion
-    converted_spectrum = conv_func(specviz_helper.app, spectrum=spectrum1d,
-                                   new_spectral_axis=new_spectral_axis)
+    # Convert the wavelength axis to micron
+    new_spectral_axis = "um"
+    specviz_helper.plugins['Unit Conversion'].spectral_unit = new_spectral_axis
 
-    # Add this new data and clear the other, making the converted spectrum our reference
-    specviz_helper.app.add_data(converted_spectrum, "Converted Spectrum")
-    specviz_helper.app.add_data_to_viewer("spectrum-viewer",
-                                          "Converted Spectrum",
-                                          clear_other_data=True)
-
-    specviz_helper.app.get_viewer("spectrum-viewer").apply_roi(XRangeROI(0.6, 0.7))
+    spec_viewer.apply_roi(XRangeROI(0.6, 0.7))
 
     # Retrieve the Subset
-    subsets = specviz_helper.get_spectral_regions()
+    subsets = specviz_helper.get_spectral_regions(use_display_units=False)
     reg = subsets.get('Subset 1')
+    assert reg.lower.unit == u.Angstrom
+    assert reg.upper.unit == u.Angstrom
 
-    assert reg.lower.unit == u.Unit(new_spectral_axis)
-    assert reg.upper.unit == u.Unit(new_spectral_axis)
+    subsets = specviz_helper.get_spectral_regions(use_display_units=True)
+    reg = subsets.get('Subset 1')
+    assert reg.lower.unit == u.um
+    assert reg.upper.unit == u.um
 
     # Coordinates info panel should show new unit
     label_mouseover._viewer_mouse_event(spec_viewer,
@@ -259,7 +314,7 @@ def test_get_spectral_regions_unit_conversion(specviz_helper, spectrum1d):
     label_mouseover.as_text() == ('Cursor 6.10000e-01, 1.25000e+01',
                                   'Wave 6.00000e-01 micron (0 pix)',
                                   'Flux 1.24967e+01 Jy')
-    assert label_mouseover.icon == 'b'
+    assert label_mouseover.icon == 'a'
 
     label_mouseover._viewer_mouse_event(spec_viewer, {'event': 'mouseleave'})
     assert label_mouseover.as_text() == ('', '', '')
@@ -267,7 +322,7 @@ def test_get_spectral_regions_unit_conversion(specviz_helper, spectrum1d):
 
 
 def test_subset_default_thickness(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d)
+    specviz_helper.load_data(spectrum1d)
 
     sv = specviz_helper.app.get_viewer('spectrum-viewer')
     sv.toolbar.active_tool = sv.toolbar.tools['bqplot:xrange']
@@ -295,7 +350,7 @@ def test_load_spectrum_list_directory(tmpdir, specviz_helper):
     # Load two NIRISS x1d files from FITS. They have 19 and 20 EXTRACT1D
     # extensions per file, for a total of 39 spectra to load:
     with pytest.warns(UserWarning, match='SRCTYPE is missing or UNKNOWN in JWST x1d loader'):
-        specviz_helper.load_spectrum(data_path)
+        specviz_helper.load_data(data_path)
 
     # NOTE: the length was 3 before specutils 1.9 (https://github.com/astropy/specutils/pull/982)
     expected_len = 39
@@ -322,12 +377,12 @@ def test_load_spectrum_list_directory_concat(tmpdir, specviz_helper):
     # spectra common to each file into one "Combined" spectrum to load per file.
     # Now the total is (19 EXTRACT 1D + 1 Combined) + (20 EXTRACT 1D + 1 Combined) = 41.
     with pytest.warns(UserWarning, match='SRCTYPE is missing or UNKNOWN in JWST x1d loader'):
-        specviz_helper.load_spectrum(data_path, concat_by_file=True)
+        specviz_helper.load_data(data_path, concat_by_file=True)
     assert len(specviz_helper.app.data_collection) == 41
 
 
 def test_plot_uncertainties(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d)
+    specviz_helper.load_data(spectrum1d)
 
     specviz_viewer = specviz_helper.app.get_viewer("spectrum-viewer")
 
@@ -361,7 +416,7 @@ def test_plugin_user_apis(specviz_helper):
 
 def test_data_label_as_posarg(specviz_helper, spectrum1d):
     # Passing in data_label keyword as posarg.
-    specviz_helper.load_spectrum(spectrum1d, 'my_spec')
+    specviz_helper.load_data(spectrum1d, 'my_spec')
     assert specviz_helper.app.data_collection[0].label == 'my_spec'
 
 
@@ -376,8 +431,8 @@ def test_spectra_partial_overlap(specviz_helper):
     flux_2 = ([60] * wave_2.size) * u.nJy
     sp_2 = Spectrum1D(flux=flux_2, spectral_axis=wave_2)
 
-    specviz_helper.load_spectrum(sp_1, data_label='left')
-    specviz_helper.load_spectrum(sp_2, data_label='right')
+    specviz_helper.load_data(sp_1, data_label='left')
+    specviz_helper.load_data(sp_2, data_label='right')
 
     # Test mouseover outside of left but in range for right.
     # Should show right spectrum even when mouse is near left flux.
@@ -388,3 +443,18 @@ def test_spectra_partial_overlap(specviz_helper):
                                          'Wave 7.02222e+03 Angstrom (2 pix)',
                                          'Flux 6.00000e+01 nJy')
     assert label_mouseover.icon == 'b'
+
+
+def test_spectra_incompatible_flux(specviz_helper):
+    """https://github.com/spacetelescope/jdaviz/issues/2459"""
+    wav = [1.1, 1.2, 1.3] * u.um
+    sp1 = Spectrum1D(flux=[1, 1.1, 1] * (u.MJy / u.sr), spectral_axis=wav)
+    sp2 = Spectrum1D(flux=[1, 1, 1.1] * (u.MJy), spectral_axis=wav)
+    flux3 = ([1, 1.1, 1] * u.MJy).to(u.erg / u.s / u.cm / u.cm / u.AA, u.spectral_density(wav))
+    sp3 = Spectrum1D(flux=flux3, spectral_axis=wav)
+
+    specviz_helper.load_data(sp2, data_label="2")  # OK
+    specviz_helper.load_data(sp1, data_label="1")  # Not OK
+    specviz_helper.load_data(sp3, data_label="3")  # OK
+
+    assert specviz_helper.app.data_collection.labels == ["2", "3"]

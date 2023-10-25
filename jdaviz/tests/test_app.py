@@ -53,25 +53,26 @@ def test_nonstandard_specviz_viewer_name(spectrum1d):
     viz = Customviz()
     assert viz.app.get_viewer_reference_names() == ['h', 'k']
 
-    viz.load_spectrum(spectrum1d, data_label='example label')
-    assert not len(viz.app.get_data_from_viewer("h", "non-existent label"))
+    viz.load_data(spectrum1d, data_label='example label')
+    with pytest.raises(ValueError):
+        viz.get_data("non-existent label")
 
 
 def test_duplicate_data_labels(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d, data_label="test")
-    specviz_helper.load_spectrum(spectrum1d, data_label="test")
+    specviz_helper.load_data(spectrum1d, data_label="test")
+    specviz_helper.load_data(spectrum1d, data_label="test")
     dc = specviz_helper.app.data_collection
     assert dc[0].label == "test"
     assert dc[1].label == "test (1)"
-    specviz_helper.load_spectrum(spectrum1d, data_label="test_1")
-    specviz_helper.load_spectrum(spectrum1d, data_label="test")
+    specviz_helper.load_data(spectrum1d, data_label="test_1")
+    specviz_helper.load_data(spectrum1d, data_label="test")
     assert dc[2].label == "test_1"
     assert dc[3].label == "test (2)"
 
 
 def test_duplicate_data_labels_with_brackets(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d, data_label="test[test]")
-    specviz_helper.load_spectrum(spectrum1d, data_label="test[test]")
+    specviz_helper.load_data(spectrum1d, data_label="test[test]")
+    specviz_helper.load_data(spectrum1d, data_label="test[test]")
     dc = specviz_helper.app.data_collection
     assert len(dc) == 2
     assert dc[0].label == "test[test]"
@@ -105,7 +106,7 @@ def test_unique_name_variations(specviz_helper, spectrum1d):
     data_label = specviz_helper.app.return_unique_name(None)
     assert data_label == "Unknown"
 
-    specviz_helper.load_spectrum(spectrum1d, data_label="test[flux]")
+    specviz_helper.load_data(spectrum1d, data_label="test[flux]")
     data_label = specviz_helper.app.return_data_label("test[flux]", ext="flux")
     assert data_label == "test[flux][flux]"
 
@@ -114,8 +115,8 @@ def test_unique_name_variations(specviz_helper, spectrum1d):
 
 
 def test_substring_in_label(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d, data_label="M31")
-    specviz_helper.load_spectrum(spectrum1d, data_label="M32")
+    specviz_helper.load_data(spectrum1d, data_label="M31")
+    specviz_helper.load_data(spectrum1d, data_label="M32")
     data_label = specviz_helper.app.return_data_label("M")
     assert data_label == "M"
 
@@ -126,17 +127,46 @@ def test_substring_in_label(specviz_helper, spectrum1d):
 def test_edge_cases(specviz_helper, spectrum1d, data_label):
     dc = specviz_helper.app.data_collection
 
-    specviz_helper.load_spectrum(spectrum1d, data_label=data_label)
-    specviz_helper.load_spectrum(spectrum1d, data_label=data_label)
+    specviz_helper.load_data(spectrum1d, data_label=data_label)
+    specviz_helper.load_data(spectrum1d, data_label=data_label)
     assert dc[1].label == f"{data_label} (1)"
 
-    specviz_helper.load_spectrum(spectrum1d, data_label=data_label)
+    specviz_helper.load_data(spectrum1d, data_label=data_label)
     assert dc[2].label == f"{data_label} (2)"
 
 
 def test_case_that_used_to_break_return_label(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d, data_label="this used to break (1)")
-    specviz_helper.load_spectrum(spectrum1d, data_label="this used to break")
+    specviz_helper.load_data(spectrum1d, data_label="this used to break (1)")
+    specviz_helper.load_data(spectrum1d, data_label="this used to break")
     dc = specviz_helper.app.data_collection
     assert dc[0].label == "this used to break (1)"
     assert dc[1].label == "this used to break (2)"
+
+
+def test_viewer_renaming_specviz(specviz_helper):
+    viewer_names = [
+        'spectrum-viewer',
+        'second-viewer-name',
+        'third-viewer-name'
+    ]
+
+    for i in range(len(viewer_names) - 1):
+        specviz_helper.app._update_viewer_reference_name(
+            old_reference=viewer_names[i],
+            new_reference=viewer_names[i + 1]
+        )
+        assert specviz_helper.app.get_viewer(viewer_names[i+1]) is not None
+
+
+def test_viewer_renaming_imviz(imviz_helper):
+    with pytest.raises(ValueError, match="'imviz-0' cannot be changed"):
+        imviz_helper.app._update_viewer_reference_name(
+            old_reference='imviz-0',
+            new_reference='this-is-forbidden'
+        )
+
+    with pytest.raises(ValueError, match="does not exist"):
+        imviz_helper.app._update_viewer_reference_name(
+            old_reference='non-existent',
+            new_reference='this-is-forbidden'
+        )

@@ -1,7 +1,7 @@
 <template>
   <j-tray-plugin
     description='Plot lines from preset or custom line lists.'
-    :link="'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#line-lists'"
+    :link="docs_link || 'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#line-lists'"
     :disabled_msg="disabled_msg"
     :popout_button="popout_button">
 
@@ -132,7 +132,7 @@
                   <v-menu>
                     <template v-slot:activator="{ on }">
                         <span class="linelist-color-menu"
-                              :style="`background:${list_contents[item].color}`"
+                              :style="`background:${list_contents[item].color}; cursor: pointer`"
                               @click.stop="on.click"
                         >&nbsp;</span>
                     </template>

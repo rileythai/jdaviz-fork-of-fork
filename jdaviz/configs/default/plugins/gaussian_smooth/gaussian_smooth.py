@@ -50,13 +50,6 @@ class GaussianSmooth(PluginTemplateMixin, DatasetSelectMixin, AddResultsMixin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._default_spectrum_viewer_reference_name = kwargs.get(
-            "spectrum_viewer_reference_name", "spectrum-viewer"
-        )
-        self._default_flux_viewer_reference_name = kwargs.get(
-            "flux_viewer_reference_name", "flux-viewer"
-        )
-
         if self.config == "cubeviz":
             self.show_modes = True
             # retrieve the data from the cube, not the collapsed 1d spectrum
@@ -66,10 +59,12 @@ class GaussianSmooth(PluginTemplateMixin, DatasetSelectMixin, AddResultsMixin):
             ]
             # clear the cache in case the spectrum-viewer selection was already cached
             self.dataset._clear_cache()
-        elif self.config == "mosviz":
+        elif self.config in ("mosviz", "specviz2d"):
             # only allow smoothing 1d spectra
             self.dataset._viewers = [self._default_spectrum_viewer_reference_name]
             self.dataset._clear_cache()
+
+        self.dataset.add_filter('not_from_this_plugin')
 
         self.mode = SelectPluginComponent(self,
                                           items='mode_items',
@@ -78,6 +73,18 @@ class GaussianSmooth(PluginTemplateMixin, DatasetSelectMixin, AddResultsMixin):
 
         # set the filter on the viewer options
         self._update_viewer_filters()
+
+    @property
+    def _default_spectrum_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_spectrum_viewer_reference_name', 'spectrum-viewer'
+        )
+
+    @property
+    def _default_flux_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_flux_viewer_reference_name', 'flux-viewer'
+        )
 
     @property
     def user_api(self):

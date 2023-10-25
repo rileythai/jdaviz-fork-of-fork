@@ -1,5 +1,10 @@
 <template>
-  <v-app id="web-app" :class="'jdaviz ' + config" ref="mainapp">
+  <v-app id="web-app" :style="checkNotebookContext() ? 'display: inline' : 'display: flex'" :class="'jdaviz ' + config" ref="mainapp">
+    <jupyter-widget
+      v-if="state.style_widget"
+      :widget="state.style_widget"
+      style="display: none"
+    ></jupyter-widget>
     <v-overlay v-if="state.logger_overlay"
       absolute
       opacity="0.7">
@@ -49,7 +54,7 @@
           <jupyter-widget :widget="popout_button" ></jupyter-widget>
         </j-tooltip>
         <j-tooltip tipid="app-help">
-          <v-btn icon :href="getReadTheDocsLink()" target="_blank">
+          <v-btn icon :href="docs_link" target="_blank">
             <v-icon medium>mdi-help-box</v-icon>
           </v-btn>
         </j-tooltip>
@@ -97,7 +102,7 @@
               </gl-row>
             </golden-layout>
           </pane>
-          <pane size="25" min-size="25" v-if="state.drawer" style="background-color: #fafbfc; border-top: 6px solid #C75109">
+          <pane size="25" min-size="25" v-if="state.drawer" style="background-color: #fafbfc; border-top: 6px solid #C75109; min-width: 250px">
             <v-card flat tile class="overflow-y-auto fill-height" style="overflow-x: hidden" color="gray">
               <v-text-field
                 v-model='state.tray_items_filter'
@@ -115,7 +120,7 @@
                       </j-tooltip>
                     </v-expansion-panel-header>
                     <v-expansion-panel-content style="margin-left: -12px; margin-right: -12px;">
-                      <jupyter-widget :widget="trayItem.widget"></jupyter-widget>
+                      <jupyter-widget :widget="trayItem.widget" v-if="state.tray_items_open.includes(index)"></jupyter-widget>
                     </v-expansion-panel-content>
                   </div>
                 </v-expansion-panel>
@@ -162,15 +167,9 @@ export default {
   methods: {
     checkNotebookContext() {
       this.notebook_context = document.getElementById("ipython-main-app")
-        || document.querySelector('.jp-LabShell');
+        || document.querySelector('.jp-LabShell')
+        || document.querySelector(".lm-Widget#main"); /* Notebook 7 */
       return this.notebook_context;
-    },
-    getReadTheDocsLink() {
-      if (['specviz', 'specviz2d', 'cubeviz', 'mosviz', 'imviz'].indexOf(this.config) !== -1) {
-        return 'https://jdaviz.readthedocs.io/en/'+this.vdocs+'/'+this.config+'/index.html'
-      } else {
-        return 'https://jdaviz.readthedocs.io'
-      }
     },
     trayItemVisible(trayItem, tray_items_filter) {
       if (tray_items_filter === null || tray_items_filter.length == 0) {
@@ -433,4 +432,12 @@ a:active {
    * appearing */
   overflow: hidden;
 }
+
+.jupyter-widgets.bqplot.figure .axislabel {
+    /* consistent with other labels (legend, buttons, plugin expansion menu labels, etc)*/
+    font-size: 15px !important;
+    font-family: Roboto, sans-serif !important;
+    font-weight: 500 !important;
+}
+
 </style>

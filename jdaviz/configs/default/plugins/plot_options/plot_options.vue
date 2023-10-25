@@ -1,7 +1,9 @@
 <template>
   <j-tray-plugin
     description='Viewer and data/layer options.'
-    :link="'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#plot-options'"
+    :link="docs_link || 'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#plot-options'"
+    :uses_active_status="uses_active_status"
+    @plugin-ping="plugin_ping($event)"
     :popout_button="popout_button">
 
     <v-row>
@@ -59,6 +61,15 @@
     />
 
     <j-plugin-section-header v-if="layer_selected.length && (line_visible_sync.in_subscribed_states || subset_visible_sync.in_subscribed_states)">Layer Visibility</j-plugin-section-header>
+    <glue-state-sync-wrapper :sync="marker_visible_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_visible')">
+      <span>
+        <v-btn icon @click.stop="marker_visible_value = !marker_visible_value">
+          <v-icon>mdi-eye{{ marker_visible_value ? '' : '-off' }}</v-icon>
+        </v-btn>
+        Show Marker
+      </span>
+    </glue-state-sync-wrapper>
+
     <glue-state-sync-wrapper :sync="line_visible_sync" :multiselect="multiselect" @unmix-state="unmix_state('line_visible')">
       <span>
         <v-btn icon @click.stop="line_visible_value = !line_visible_value">
@@ -83,7 +94,7 @@
         <v-menu>
           <template v-slot:activator="{ on }">
               <span class="color-menu"
-                    :style="`background:${subset_color_value}`"
+                    :style="`background:${subset_color_value}; cursor: pointer`"
                     @click.stop="on.click"
               >&nbsp;</span>
           </template>
@@ -97,7 +108,7 @@
 
 
     <!-- PROFILE/LINE -->
-    <j-plugin-section-header v-if="line_width_sync.in_subscribed_states || collapse_func_sync.in_subscribed_states">Line</j-plugin-section-header>
+    <j-plugin-section-header v-if="(line_visible_sync.in_subscribed_states && line_visible_value) || collapse_func_sync.in_subscribed_states">Line</j-plugin-section-header>
     <glue-state-sync-wrapper v-if="config === 'cubeviz'" :sync="collapse_func_sync" :multiselect="multiselect" @unmix-state="unmix_state('function')">
       <v-select
         :menu-props="{ left: true }"
@@ -116,7 +127,7 @@
         <v-menu>
           <template v-slot:activator="{ on }">
               <span class="color-menu"
-                    :style="`background:${line_color_value}`"
+                    :style="`background:${line_color_value}; cursor: pointer`"
                     @click.stop="on.click"
               >&nbsp;</span>
           </template>
@@ -146,12 +157,163 @@
         />
     </glue-state-sync-wrapper>
 
-    <glue-state-sync-wrapper v-if="config !== 'cubeviz' && line_visible_value" :sync="uncertainty_visible_sync" :multiselect="multiselect" @unmix-state="unmix_state('uncertainty_visible')">
+    <glue-state-sync-wrapper v-if="line_visible_value" :sync="uncertainty_visible_sync" :multiselect="multiselect" @unmix-state="unmix_state('uncertainty_visible')">
       <v-switch
         v-model="uncertainty_visible_value"
         label="Plot uncertainties"
         />
     </glue-state-sync-wrapper>
+
+    <!-- MARKER/SCATTER -->
+    <div v-if="marker_visible_sync.in_subscribed_states">
+      <j-plugin-section-header>Marker</j-plugin-section-header>
+      <glue-state-sync-wrapper v-if="marker_visible_value" :sync="marker_fill_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_fill')">
+        <v-switch
+          v-model="marker_fill_value"
+          label="Fill Marker"
+          />
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value" :sync="marker_opacity_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_opacity')">
+        <div>
+          <v-subheader class="pl-0 slider-label" style="height: 12px">Opacity</v-subheader>
+          <glue-throttled-slider wait="300" max="1" step="0.01" :value.sync="marker_opacity_value" hide-details class="no-hint" />
+        </div>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value" :sync="marker_size_mode_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_size_mode')">
+        <v-select
+          attach
+          :menu-props="{ left: true }"
+          :items="marker_size_mode_sync.choices"
+          v-model="marker_size_mode_value"
+          label="Size Mode"
+          class="no-hint"
+        ></v-select>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_size_mode_value==='Fixed'" :sync="marker_size_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_size')">
+        <div>
+          <v-subheader class="pl-0 slider-label" style="height: 12px">Size</v-subheader>
+          <glue-throttled-slider wait="300" max="10" step="0.1" :value.sync="marker_size_value" hide-details class="no-hint" />
+        </div>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value" :sync="marker_size_scale_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_size_scale')">
+        <div>
+          <v-subheader class="pl-0 slider-label" style="height: 12px">Scale</v-subheader>
+          <glue-throttled-slider wait="300" max="10" step="0.1" :value.sync="marker_size_scale_value" hide-details class="no-hint" />
+        </div>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_size_mode_value!=='Fixed'" :sync="marker_size_col_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_size_col')">
+        <v-select
+          attach
+          :menu-props="{ left: true }"
+          :items="marker_size_col_sync.choices"
+          v-model="marker_size_col_value"
+          label="Column"
+          class="no-hint"
+        ></v-select>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_size_mode_value!=='Fixed'" :sync="marker_size_vmin_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_size_vmin')">
+        <v-text-field
+          ref="marker_size_vmin"
+          type="number"
+          label="vmin"
+          v-model.number="marker_size_vmin_value"
+          type="number"
+          step="0.01"
+        ></v-text-field>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_size_mode_value!=='Fixed'" :sync="marker_size_vmax_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_size_vmax')">
+        <v-text-field
+          ref="marker_size_vmax"
+          type="number"
+          label="vmax"
+          v-model.number="marker_size_vmax_value"
+          type="number"
+          step="0.01"
+        ></v-text-field>
+      </glue-state-sync-wrapper>
+
+
+      <glue-state-sync-wrapper v-if="marker_visible_value" :sync="marker_color_mode_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_color_mode')">
+        <v-select
+          attach
+          :menu-props="{ left: true }"
+          :items="marker_color_mode_sync.choices"
+          v-model="marker_color_mode_value"
+          label="Color Mode"
+          class="no-hint"
+        ></v-select>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_color_mode_value==='Fixed'" :sync="marker_color_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_color')">
+        <div>
+          <v-subheader class="pl-0 slider-label" style="height: 12px">Color</v-subheader>
+          <v-menu>
+            <template v-slot:activator="{ on }">
+                <span class="color-menu"
+                      :style="`background:${marker_color_value}; cursor: pointer`"
+                      @click.stop="on.click"
+                >&nbsp;</span>
+            </template>
+            <div @click.stop="" style="text-align: end; background-color: white">
+                <v-color-picker :value="marker_color_value"
+                                @update:color="throttledSetValue('marker_color_value', $event.hexa)"></v-color-picker>
+            </div>
+          </v-menu>
+        </div>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_color_mode_value!=='Fixed'" :sync="marker_color_col_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_color_col')">
+        <v-select
+          attach
+          :menu-props="{ left: true }"
+          :items="marker_color_col_sync.choices"
+          v-model="marker_color_col_value"
+          label="Column"
+          class="no-hint"
+        ></v-select>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_color_mode_value!=='Fixed'" :sync="marker_colormap_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_colormap')">
+        <v-select
+          attach
+          :menu-props="{ left: true }"
+          :items="marker_colormap_sync.choices"
+          v-model="marker_colormap_value"
+          label="Colormap"
+          class="no-hint"
+        ></v-select>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_color_mode_value!=='Fixed'" :sync="marker_colormap_vmin_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_colormap_vmin')">
+        <v-text-field
+          ref="marker_colormap_vmin"
+          type="number"
+          label="vmin"
+          v-model.number="marker_colormap_vmin_value"
+          type="number"
+          step="0.01"
+        ></v-text-field>
+      </glue-state-sync-wrapper>
+
+      <glue-state-sync-wrapper v-if="marker_visible_value && marker_color_mode_value!=='Fixed'" :sync="marker_colormap_vmax_sync" :multiselect="multiselect" @unmix-state="unmix_state('marker_colormap_vmax')">
+        <v-text-field
+          ref="marker_colormap_vmax"
+          type="number"
+          label="vmax"
+          v-model.number="marker_colormap_vmax_value"
+          type="number"
+          step="0.01"
+        ></v-text-field>
+      </glue-state-sync-wrapper>
+    </div>
+
 
     <!-- IMAGE -->
     <!-- IMAGE:STRETCH -->
@@ -179,12 +341,61 @@
     </glue-state-sync-wrapper>
 
     <glue-state-sync-wrapper :sync="stretch_vmin_sync" :multiselect="multiselect" @unmix-state="unmix_state('stretch_vmin')">
-      <glue-float-field label="Stretch VMin" :value.sync="stretch_vmin_value" />
+      <v-text-field
+        ref="stretch_vmin"
+        type="number"
+        label="Stretch VMin"
+        v-model.number="stretch_vmin_value"
+        type="number"
+        :step="stretch_vstep"
+      ></v-text-field>
     </glue-state-sync-wrapper>
 
     <glue-state-sync-wrapper :sync="stretch_vmax_sync" :multiselect="multiselect" @unmix-state="unmix_state('stretch_vmax')">
-      <glue-float-field label="Stretch VMax" :value.sync="stretch_vmax_value" />
+      <v-text-field
+        ref="stretch_vmax"
+        type="number"
+        label="Stretch VMax"
+        v-model.number="stretch_vmax_value"
+        type="number"
+        :step="stretch_vstep"
+      ></v-text-field>
     </glue-state-sync-wrapper>
+
+    <div v-if="stretch_function_sync.in_subscribed_states">
+      <v-row>
+        <v-text-field
+            ref="stretch_hist_nbins"
+            type="number"
+            label="Number of Bins"
+            v-model.number="stretch_hist_nbins"
+            hint="The amount of bins used in the histogram."
+            persistent-hint
+            :rules="[() => stretch_hist_nbins !== '' || 'This field is required',
+                     () => stretch_hist_nbins > 0 || 'Number of Bins must be greater than zero']"
+        ></v-text-field>
+      </v-row>
+      <v-row>
+        <!-- z-index to ensure on top of the jupyter widget with negative margin-top -->
+        <v-switch
+          v-model="stretch_hist_zoom_limits"
+          class="hide-input"
+          label="Limit histogram to current zoom limits"
+          style="z-index: 1"
+        ></v-switch>
+      </v-row>
+      <v-row>
+        <v-switch
+          v-model="stretch_curve_visible"
+          class="hide-input"
+          label="Show stretch function curve"
+          style="z-index: 1"
+        ></v-switch>
+        <!-- NOTE: height defined here should match that in the custom CSS rules
+             below for the bqplot class -->
+      </v-row>
+      <jupyter-widget :widget="stretch_histogram_widget"/>
+      </div>
 
     <!-- IMAGE:IMAGE -->
     <j-plugin-section-header v-if="image_visible_sync.in_subscribed_states">Image</j-plugin-section-header>
@@ -227,7 +438,7 @@
           <v-menu>
             <template v-slot:activator="{ on }">
                 <span class="color-menu"
-                      :style="`background:${image_color_value}`"
+                      :style="`background:${image_color_value}; cursor: pointer`"
                       @click.stop="on.click"
                 >&nbsp;</span>
             </template>
@@ -321,7 +532,6 @@
             </glue-state-sync-wrapper>
           </div>
         </div>
-
       </div>
       <div v-if="contour_spinner"
            class="text-center"
@@ -338,7 +548,7 @@
           width="6"
         ></v-progress-circular>
       </div>
-
+    </div>
     <!-- GENERAL:AXES -->
     <j-plugin-section-header v-if="axes_visible_sync.in_subscribed_states && config !== 'imviz'">Axes</j-plugin-section-header>
     <glue-state-sync-wrapper v-if="config !== 'imviz'":sync="axes_visible_sync" :multiselect="multiselect" @unmix-state="unmix_state('axes_visible')">
@@ -385,7 +595,7 @@ module.exports = {
 }
 </script>
 
-<style>
+<style scoped>
 .color-menu {
     font-size: 16px;
     padding-left: 16px;

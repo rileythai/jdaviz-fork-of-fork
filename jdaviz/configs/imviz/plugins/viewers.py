@@ -1,8 +1,8 @@
 import numpy as np
 
+import astropy.units as u
 from astropy.wcs.utils import pixel_to_pixel
 from astropy.visualization import ImageNormalize, LinearStretch, PercentileInterval
-from glue.core.link_helpers import LinkSame
 from glue_jupyter.bqplot.image import BqplotImageView
 
 from jdaviz.configs.imviz import wcs_utils
@@ -24,8 +24,8 @@ class ImvizImageView(JdavizViewerMixin, BqplotImageView, AstrowidgetsImageViewer
                     ['jdaviz:homezoom', 'jdaviz:prevzoom'],
                     ['jdaviz:boxzoommatch', 'jdaviz:boxzoom'],
                     ['jdaviz:panzoommatch', 'jdaviz:imagepanzoom'],
-                    ['bqplot:circle', 'bqplot:rectangle', 'bqplot:ellipse',
-                     'jdaviz:singlepixelregion'],
+                    ['bqplot:truecircle', 'bqplot:rectangle', 'bqplot:ellipse',
+                     'bqplot:circannulus', 'jdaviz:singlepixelregion'],
                     ['jdaviz:blinkonce', 'jdaviz:contrastbias'],
                     ['jdaviz:sidebar_plot', 'jdaviz:sidebar_export', 'jdaviz:sidebar_compass']
                 ]
@@ -79,19 +79,6 @@ class ImvizImageView(JdavizViewerMixin, BqplotImageView, AstrowidgetsImageViewer
             if key_pressed in ('b', 'B'):
                 self.blink_once(reversed=key_pressed=='B')  # noqa: E225
 
-            elif key_pressed == 'l' and self.line_profile_xy.plugin_opened:
-                # Same data as mousemove above.
-                image = self.active_image_layer.layer
-                x = data['domain']['x']
-                y = data['domain']['y']
-                if x is None or y is None:  # Out of bounds
-                    return
-                x, y, _, _ = self._get_real_xy(image, x, y)
-                self.line_profile_xy.selected_x = x
-                self.line_profile_xy.selected_y = y
-                self.line_profile_xy.selected_viewer = self.reference_id
-                self.line_profile_xy.vue_draw_plot()
-
     def blink_once(self, reversed=False):
         # Simple blinking of images - this will make it so that only one
         # layer is visible at a time and cycles through the layers.
@@ -139,7 +126,7 @@ class ImvizImageView(JdavizViewerMixin, BqplotImageView, AstrowidgetsImageViewer
                             'imviz-line-profile-xy')
                     except KeyError:  # pragma: no cover
                         return
-                self.line_profile_xy.selected_viewer = self.reference_id
+                self.line_profile_xy.viewer_selected = self.reference_id
                 self.line_profile_xy.vue_draw_plot()
 
     def on_limits_change(self, *args):
@@ -233,6 +220,7 @@ class ImvizImageView(JdavizViewerMixin, BqplotImageView, AstrowidgetsImageViewer
                                     (self.state.x_min, self.state.y_max),
                                     (self.state.x_max, self.state.y_max),
                                     (self.state.x_max, self.state.y_min)))
+
         return zoom_limits
 
     def set_compass(self, image):
@@ -292,23 +280,28 @@ class ImvizImageView(JdavizViewerMixin, BqplotImageView, AstrowidgetsImageViewer
         if len(self.session.application.data_collection) == 0:
             raise ValueError('No reference data for link look-up')
 
-        # the original links were created against data_collection[0], not necessarily
+        # TODO: Brett Morris might want to look at this for
+        # https://github.com/spacetelescope/jdaviz/pull/2179
+        #     ref_label = self.state.reference_data ???
+        #
+        # The original links were created against data_collection[0], not necessarily
         # against the current viewer reference_data
         ref_label = self.session.application.data_collection[0].label
-        if data_label == ref_label:
-            return 'self'
 
-        link_type = None
-        for elink in self.session.application.data_collection.external_links:
-            elink_labels = (elink.data1.label, elink.data2.label)
-            if data_label in elink_labels and ref_label in elink_labels:
-                if isinstance(elink, LinkSame):  # Assumes WCS link never uses LinkSame
-                    link_type = 'pixels'
-                else:  # If not pixels, must be WCS
-                    link_type = 'wcs'
-                break  # Might have duplicate, just grab first match
+        return self.jdaviz_helper.get_link_type(ref_label, data_label)
 
-        if link_type is None:
-            raise ValueError(f'{data_label} not found in data collection external links')
-
-        return link_type
+    def _get_center_skycoord(self, data=None):
+        if data is None:
+            data = self.state.reference_data
+        # get SkyCoord for the center of ``data`` in this viewer:
+        width = self.state.x_max - self.state.x_min
+        height = self.state.y_max - self.state.y_min
+        x_cen = self.state.x_min + (width * 0.5)
+        y_cen = self.state.y_min + (height * 0.5)
+        x_cen, y_cen = self._get_real_xy(
+            data, x_cen, y_cen
+        )[:2]
+        sky_cen = data.coords.pixel_to_world(
+            x_cen * u.pix, y_cen * u.pix
+        )
+        return sky_cen

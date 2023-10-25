@@ -11,7 +11,7 @@ def test_spectralsubsetselect(specviz_helper, spectrum1d):
     mask = spectrum1d.flux < spectrum1d.flux.mean()
     spectrum1d.mask = mask
 
-    specviz_helper.load_spectrum(spectrum1d)
+    specviz_helper.load_data(spectrum1d)
     sv = specviz_helper.app.get_viewer('spectrum-viewer')
     # create a "Subset 1" entry
     sv.apply_roi(XRangeROI(6500, 7400))
@@ -28,7 +28,9 @@ def test_spectralsubsetselect(specviz_helper, spectrum1d):
     assert p.spectral_subset.selected_obj is not None
     expected_min = spectrum1d.spectral_axis[spectrum1d.spectral_axis.value >= 6500][0]
     expected_max = spectrum1d.spectral_axis[spectrum1d.spectral_axis.value <= 7400][-1]
-    assert p.spectral_subset.selected_min_max(spectrum1d) == (expected_min, expected_max)
+    np.testing.assert_allclose(expected_min.value, 6666.66666667, atol=1e-5)
+    np.testing.assert_allclose(expected_max.value, 7333.33333333, atol=1e-5)
+    assert p.spectral_subset.selected_min_max(spectrum1d) == (6500 * u.AA, 7400 * u.AA)
 
     # check selected subset mask available via API:
     expected_mask_with_spectral_subset = (

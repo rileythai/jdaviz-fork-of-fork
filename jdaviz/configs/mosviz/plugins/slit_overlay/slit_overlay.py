@@ -1,44 +1,32 @@
-from jdaviz.core.registries import tray_registry
-from jdaviz.core.template_mixin import PluginTemplateMixin
-from jdaviz.core.events import SnackbarMessage
-
+import bqplot
+import numpy as np
+from astropy import units as u
+from astropy.coordinates import Angle, SkyCoord
+from regions import PolygonSkyRegion
 from traitlets import Bool
 
-import numpy as np
-from regions import RectangleSkyRegion
-from astropy.coordinates import Angle, SkyCoord
-from astropy import units as u
-
-import bqplot
+from jdaviz.core.events import SnackbarMessage
+from jdaviz.core.registries import tray_registry
+from jdaviz.core.template_mixin import PluginTemplateMixin
 
 __all__ = ['SlitOverlay', 'jwst_header_to_skyregion']
 
 
 def jwst_header_to_skyregion(header):
+    """Convert S_REGION in given FITS header for JWST data into sky region."""
     s_region = header['S_REGION']
     footprint = s_region.split("POLYGON ICRS")[1].split()
     ra = np.array(footprint[::2], dtype=float)
     dec = np.array(footprint[1::2], dtype=float)
-
-    # Find center of slit
-    cra = (max(ra) + min(ra)) / 2
-    cdec = (max(dec) + min(dec)) / 2
-
-    # Find center as skycoord
-    skycoord = SkyCoord(cra, cdec,
-                        unit=(u.Unit(u.deg),
-                              u.Unit(u.deg)))
-
-    # Puts corners of slit into skycoord object
     corners = SkyCoord(ra, dec, unit="deg")
+    skyregion = PolygonSkyRegion(corners)
 
-    # Compute length and width
+    # Need these for zooming
     length = corners[0].separation(corners[1])
     width = corners[1].separation(corners[2])
-    length = Angle(length, u.deg)
-    width = Angle(width, u.deg)
+    skyregion.height = Angle(max(length, width), u.deg)
+    skyregion.center = SkyCoord(ra.mean(), dec.mean(), unit="deg")
 
-    skyregion = RectangleSkyRegion(center=skycoord, width=width, height=length)
     return skyregion
 
 
@@ -51,22 +39,36 @@ class SlitOverlay(PluginTemplateMixin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._default_table_viewer_reference_name = kwargs.get(
-            "table_viewer_reference_name", "table-viewer"
-        )
-        self._default_image_viewer_reference_name = kwargs.get(
-            "image_viewer_reference_name", "image-viewer"
-        )
-        self._default_spectrum_2d_viewer_reference_name = kwargs.get(
-            "spectrum_2d_viewer_reference_name", "spectrum-2d-viewer"
-        )
-        self._default_spectrum_viewer_reference_name = kwargs.get(
-            "spectrum_viewer_reference_name", "spectrum-viewer"
-        )
         table = self.app.get_viewer(self._default_table_viewer_reference_name)
         table.figure_widget.observe(self.place_slit_overlay, names=['highlighted'])
 
         self._slit_overlay_mark = None
+
+    @property
+    def _default_table_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_table_viewer_reference_name', 'table-viewer'
+        )
+
+    @property
+    def _default_image_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_image_viewer_reference_name', 'image-viewer'
+        )
+
+    @property
+    def _default_spectrum_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_spectrum_viewer_reference_name', 'spectrum-viewer'
+        )
+
+    @property
+    def _default_spectrum_2d_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper,
+            '_default_spectrum_2d_viewer_reference_name',
+            'spectrum-2d-viewer'
+        )
 
     def vue_change_visible(self, *args, **kwargs):
         if self.visible:
@@ -106,10 +108,7 @@ class SlitOverlay(PluginTemplateMixin):
                 sky_region = jwst_header_to_skyregion(header)
 
                 # Use wcs of image viewer to scale slit dimensions correctly
-                pixel_region = sky_region.to_pixel(image_data.coords)
-
-                # Create polygon region from the pixel region and set vertices
-                pix_rec = pixel_region.to_polygon()
+                pix_rec = sky_region.to_pixel(image_data.coords)
 
                 x_coords = pix_rec.vertices.x
                 y_coords = pix_rec.vertices.y
@@ -152,7 +151,6 @@ class SlitOverlay(PluginTemplateMixin):
             # We need to do the following instead of just removing directly on
             # the marks otherwise traitlets doesn't register a change in the
             # marks.
-            marks = image_figure.marks.copy()
-            marks.remove(self._slit_overlay_mark)
-            image_figure.marks = marks
+            image_figure.marks.remove(self._slit_overlay_mark)
+            image_figure.send_state('marks')
             self._slit_overlay_mark = None

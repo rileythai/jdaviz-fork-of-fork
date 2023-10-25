@@ -2,7 +2,12 @@ from astropy.coordinates.sky_coordinate import SkyCoord
 from astropy.table import QTable
 from astropy.table.row import Row as QTableRow
 import astropy.units as u
+import bqplot
+from contextlib import contextmanager
 import numpy as np
+import os
+import threading
+import time
 
 from functools import cached_property
 from ipyvuetify import VuetifyTemplate
@@ -13,7 +18,8 @@ from glue.core.message import (DataCollectionAddMessage,
                                SubsetCreateMessage,
                                SubsetDeleteMessage,
                                SubsetUpdateMessage)
-from glue.core.subset import RoiSubsetState
+from glue.core.roi import CircularAnnulusROI
+from glue_jupyter.bqplot.image import BqplotImageView
 from glue_jupyter.widgets.linked_dropdown import get_choices as _get_glue_choices
 from specutils import Spectrum1D
 from traitlets import Any, Bool, HasTraits, List, Unicode, observe
@@ -23,25 +29,33 @@ from ipypopout import PopoutButton
 
 from jdaviz import __version__
 from jdaviz.core.events import (AddDataMessage, RemoveDataMessage,
-                                ViewerAddedMessage, ViewerRemovedMessage)
+                                ViewerAddedMessage, ViewerRemovedMessage,
+                                ViewerRenamedMessage, SnackbarMessage)
 from jdaviz.core.user_api import UserApiWrapper, PluginUserApi
+from jdaviz.utils import get_subset_type
 
 
 __all__ = ['show_widget', 'TemplateMixin', 'PluginTemplateMixin',
-           'BasePluginComponent', 'SelectPluginComponent',
+           'skip_if_no_updates_since_last_active',
+           'ViewerPropertiesMixin',
+           'BasePluginComponent',
+           'SelectPluginComponent', 'UnitSelectPluginComponent', 'EditableSelectPluginComponent',
            'PluginSubcomponent',
            'SubsetSelect', 'SpatialSubsetSelectMixin', 'SpectralSubsetSelectMixin',
            'DatasetSpectralSubsetValidMixin',
            'ViewerSelect', 'ViewerSelectMixin',
            'LayerSelect', 'LayerSelectMixin',
            'DatasetSelect', 'DatasetSelectMixin',
+           'FileImportSelectPluginComponent', 'HasFileImportSelect',
            'Table', 'TableMixin',
+           'Plot', 'PlotMixin',
            'AutoTextField', 'AutoTextFieldMixin',
            'AddResults', 'AddResultsMixin',
            'PlotOptionsSyncState',
            'SPATIAL_DEFAULT_TEXT']
 
 SPATIAL_DEFAULT_TEXT = "Entire Cube"
+GLUE_STATES_WITH_HELPERS = ('size_att', 'cmap_att')
 
 
 def show_widget(widget, loc, title):  # pragma: no cover
@@ -89,19 +103,32 @@ def show_widget(widget, loc, title):  # pragma: no cover
         raise ValueError(f"Unrecognized display location: {loc}")
 
 
-def _subset_type(subset):
-    while hasattr(subset.subset_state, 'state1'):
-        # this assumes no mixing between spatial and spectral subsets and just
-        # taking the first component (down the hierarchical tree) to determine the type
-        subset = subset.subset_state.state1
+class ViewerPropertiesMixin:
+    # assumes that self.app is defined by the class
+    @cached_property
+    def spectrum_viewer(self):
+        if hasattr(self, '_default_spectrum_viewer_reference_name'):
+            viewer_reference = self._default_spectrum_viewer_reference_name
+        else:
+            viewer_reference = self.app._get_first_viewer_reference_name(
+                require_spectrum_viewer=True
+            )
 
-    if isinstance(subset.subset_state, RoiSubsetState):
-        return 'spatial'
-    else:
-        return 'spectral'
+        return self.app.get_viewer(viewer_reference)
+
+    @cached_property
+    def spectrum_2d_viewer(self):
+        if hasattr(self, '_default_spectrum_2d_viewer_reference_name'):
+            viewer_reference = self._default_spectrum_2d_viewer_reference_name
+        else:
+            viewer_reference = self.app._get_first_viewer_reference_name(
+                require_spectrum_2d_viewer=True
+            )
+
+        return self.app.get_viewer(viewer_reference)
 
 
-class TemplateMixin(VuetifyTemplate, HubListener):
+class TemplateMixin(VuetifyTemplate, HubListener, ViewerPropertiesMixin):
     config = Unicode("").tag(sync=True)
     vdocs = Unicode("").tag(sync=True)
     popout_button = Any().tag(sync=True, **widget_serialization)
@@ -188,24 +215,106 @@ class TemplateMixin(VuetifyTemplate, HubListener):
                                   if k.split(':')[0] != viewer_id}
 
 
+def skip_if_no_updates_since_last_active(skip_if_not_active=True):
+    def decorator(meth):
+        def wrapper(self, msg={}):
+            if isinstance(msg, dict) and msg.get('name', None) == 'is_active':
+                if self.is_active and meth.__name__ in self._methods_skip_since_last_active:
+                    # then we haven't received any other messages since the last time the plugin
+                    # received an is_active switch, and so we should skip calling the method.
+                    return
+            elif not self.is_active:
+                # then we've received some other message while the plugin is inactive.
+                # Next time the plugin becomes active we want to call the wrapped method,
+                # so we'll remove from the skip list.
+                if meth.__name__ in self._methods_skip_since_last_active:
+                    self._methods_skip_since_last_active.remove(meth.__name__)
+
+            if skip_if_not_active and not self.is_active:
+                return
+
+            # call the method as normal, and add it to the skip list (to be skipped if is_active
+            # toggles before any *other* messages are received)
+            # if the method returns False, then the method is not considered to have fully run
+            # and so is NOT added to the skip list
+            if meth.__name__ not in self._methods_skip_since_last_active:
+                self._methods_skip_since_last_active.append(meth.__name__)
+            ret_ = meth(self, msg)
+            if ret_ is False:
+                self._methods_skip_since_last_active.remove(meth.__name__)
+            return ret_
+
+        return wrapper
+    return decorator
+
+
 class PluginTemplateMixin(TemplateMixin):
     """
     This base class can be inherited by all sidebar/tray plugins to expose common functionality.
     """
     disabled_msg = Unicode("").tag(sync=True)
-    plugin_opened = Bool(False).tag(sync=True)
+    docs_link = Unicode("").tag(sync=True)  # set to non-empty to override value in vue file
+    plugin_opened = Bool(False).tag(sync=True)  # noqa any instance of the plugin is open (recently sent an "alive" ping)
+    uses_active_status = Bool(False).tag(sync=True)  # noqa whether the plugin has live-preview marks, set to True in plugins to expose keep_active switch
+    keep_active = Bool(False).tag(sync=True)  # noqa whether the live-preview marks show regardless of active state, inapplicable unless uses_active_status is True
+    is_active = Bool(False).tag(sync=True)  # noqa read-only: whether the previews should be shown according to plugin_opened and keep_active
 
     def __init__(self, **kwargs):
         self._viewer_callbacks = {}
+        # _inactive_thread: thread checking for alive pings to control plugin_opened
+        self._inactive_thread = None
+        self._ping_timestamp = 0
+        # _ping_delay_ms should match value in setTimeout in tray_plugin.vue
+        # NOTE: could control with a traitlet, but then would need to pass through each
+        # <j-tray-plugin> component
+        self._ping_delay_ms = 200
+
+        # _methods_skip_since_last_active: methods that should be skipped when is_active is next
+        # set to True because no changes have been made.  This can be used to prevent queuing
+        # of expensive method calls, especially when the browser throttles the ping resulting
+        # in repeated toggling of is_active.  To use, decorate any method that observes traitlet
+        # changes (including is_active) with @skip_if_no_updates_since_last_active()
+        self._methods_skip_since_last_active = []
         super().__init__(**kwargs)
-        self.app.state.add_callback('tray_items_open', self._mxn_update_plugin_opened)
-        self.app.state.add_callback('drawer', self._mxn_update_plugin_opened)
 
     @property
     def user_api(self):
         # plugins should override this to pass their own list of expose functionality, which
         # can even be dependent on config, etc.
         return PluginUserApi(self, expose=[])
+
+    def vue_plugin_ping(self, ping_timestamp):
+        if isinstance(ping_timestamp, dict):
+            # popout windows can sometimes ping but send an empty dictionary instead of the
+            # timestamp, in that case, let's set the latest ping time to now
+            ping_timestamp = time.time() * 1000
+        self._ping_timestamp = ping_timestamp
+
+        # we've received a ping, so immediately set plugin_opened state to True
+        if not self.plugin_opened:
+            self.plugin_opened = True
+
+        if self._inactive_thread is not None and self._inactive_thread.is_alive():
+            # a thread already exists to check for pings, the latest ping will allow
+            # the existing while-loop to continue
+            return
+
+        # create a thread to monitor for pings.  If a ping hasn't been received in the
+        # expected time, then plugin_opened will be set to False.
+        self._inactive_thread = threading.Thread(target=self._watch_active)
+        self._inactive_thread.start()
+
+    def _watch_active(self):
+        # plugin_ping (ms) set by setTimeout in tray_plugin.vue
+        # time.time() is in s, so need to convert to ms
+        while time.time()*1000 - self._ping_timestamp < 2 * self._ping_delay_ms:
+            # at least one plugin has sent an "alive" ping within twice of the expected
+            # interval, wait a full (double) interval and then check again
+            time.sleep(2 * self._ping_delay_ms / 1000)
+
+        # "alive" ping has not been received within the expected time, consider all instances
+        # of the plugin to be closed
+        self.plugin_opened = False
 
     def _viewer_callback(self, viewer, plugin_method):
         """
@@ -229,11 +338,6 @@ class PluginTemplateMixin(TemplateMixin):
             self._viewer_callbacks[key] = plugin_viewer_callback(viewer, plugin_method)
         return self._viewer_callbacks.get(key)
 
-    def _mxn_update_plugin_opened(self, new_value):
-        app_state = self.app.state
-        tray_names_open = [app_state.tray_items[i]['name'] for i in app_state.tray_items_open]
-        self.plugin_opened = app_state.drawer and self._registry_name in tray_names_open
-
     def open_in_tray(self):
         """
         Open the plugin in the sidebar/tray (and open the sidebar if it is not already).
@@ -243,6 +347,21 @@ class PluginTemplateMixin(TemplateMixin):
         index = [ti['name'] for ti in app_state.tray_items].index(self._registry_name)
         if index not in app_state.tray_items_open:
             app_state.tray_items_open = app_state.tray_items_open + [index]
+
+    @observe('plugin_opened', 'keep_active')
+    def _update_is_active(self, *args):
+        self.is_active = self.keep_active or self.plugin_opened
+
+    @contextmanager
+    def as_active(self):
+        """
+        Context manager to temporarily enable keep_active and enable live-previews and keypress
+        events, even if the plugin UI is not opened.
+        """
+        _keep_active = self.keep_active
+        self.keep_active = True
+        yield
+        self.keep_active = _keep_active
 
     def show(self, loc="inline", title=None):  # pragma: no cover
         """Display the plugin UI.
@@ -293,7 +412,7 @@ class PluginTemplateMixin(TemplateMixin):
         show_widget(self, loc=loc, title=title)
 
 
-class BasePluginComponent(HubListener):
+class BasePluginComponent(HubListener, ViewerPropertiesMixin):
     """
     This base class handles attaching traitlets from the plugin itself to logic
     handled within the component, support for caching and clearing caches on properties,
@@ -375,28 +494,6 @@ class BasePluginComponent(HubListener):
                 for vid, viewer in self.app._viewer_store.items()
                 if viewer.__class__.__name__ != 'MosvizTableViewer']
 
-    @cached_property
-    def spectrum_viewer(self):
-        if hasattr(self, '_default_spectrum_viewer_reference_name'):
-            viewer_reference = self._default_spectrum_viewer_reference_name
-        else:
-            viewer_reference = self.app._get_first_viewer_reference_name(
-                require_spectrum_viewer=True
-            )
-
-        return self._plugin.app.get_viewer(viewer_reference)
-
-    @cached_property
-    def spectrum_2d_viewer(self):
-        if hasattr(self, '_default_spectrum_2d_viewer_reference_name'):
-            viewer_reference = self._default_spectrum_2d_viewer_reference_name
-        else:
-            viewer_reference = self.app._get_first_viewer_reference_name(
-                require_spectrum_2d_viewer=True
-            )
-
-        return self._plugin.app.get_viewer(viewer_reference)
-
 
 class SelectPluginComponent(BasePluginComponent, HasTraits):
     """
@@ -432,6 +529,7 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
         filters = kwargs.pop('filters', [])[:]  # [:] needed to force copy from kwarg default
 
         super().__init__(*args, **kwargs)
+        self._selected_previous = None
         self._cached_properties = ["selected_obj", "selected_item"]
 
         self._default_mode = default_mode
@@ -460,7 +558,7 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
     def __repr__(self):
         if hasattr(self, 'multiselect'):
             return f"<selected={self.selected} multiselect={self.multiselect} choices={self.choices}>"  # noqa
-        return f"<selected={self.selected} choices={self.choices}>"
+        return f"<selected='{self.selected}' choices={self.choices}>"
 
     def __eq__(self, other):
         return self.selected == other
@@ -472,6 +570,10 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
     @property
     def choices(self):
         return self.labels
+
+    @choices.setter
+    def choices(self, choices=[]):
+        self.items = [{'label': choice} for choice in choices]
 
     @property
     def is_multiselect(self):
@@ -516,6 +618,15 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
         cycle = self.choices
         curr_ind = cycle.index(self.selected)
         self.selected = cycle[(curr_ind + 1) % len(cycle)]
+        return self.selected
+
+    def select_previous(self):
+        """
+        Apply and return the previous selection (or default option if no previous selection)
+        """
+        if self._selected_previous is None:
+            return self.select_default()
+        self.selected = self._selected_previous
         return self.selected
 
     @property
@@ -583,7 +694,18 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
         return self._default_mode
 
     def _apply_default_selection(self, skip_if_current_valid=True):
-        # TODO: make this multi-ready
+        if self.is_multiselect:
+            if skip_if_current_valid and len(self.selected) == 0:
+                # current selection is empty and so should remain that way
+                return
+            is_valid = [s in self.labels for s in self.selected]
+            if skip_if_current_valid and np.any(is_valid):
+                if np.all(is_valid):
+                    return
+                self.selected = [s for s in self.labels if s in self.selected]
+                return
+            is_valid = False
+
         is_valid = self.selected in self.labels
         if callable(self.default_mode):
             # callable was defined and passed by the plugin or inheriting component.
@@ -597,12 +719,13 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
             # current selection is valid
             return
 
+        default_empty = [] if self.is_multiselect else ''
         if self.default_mode == 'first':
-            self.selected = self.labels[0] if len(self.labels) else ''
+            self.selected = self.labels[0] if len(self.labels) else default_empty
         elif self.default_mode == 'default_text':
-            self.selected = self._default_text if self._default_text else ''
+            self.selected = self._default_text if self._default_text else default_empty
         else:
-            self.selected = ''
+            self.selected = default_empty
 
     def _is_valid_item(self, item, filter_callables={}):
         for valid_filter in self.filters:
@@ -621,12 +744,13 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
         self._clear_cache()
         if self.is_multiselect:
             self.selected = [self.selected]
-        elif isinstance(self.selected, list):
+        elif isinstance(self.selected, list) and len(self.selected):
             self.selected = self.selected[0]
         else:
             self._apply_default_selection()
 
     def _selected_changed(self, event):
+        self._selected_previous = event['old']
         self._clear_cache()
         if self.is_multiselect:
             if not isinstance(event['new'], list):
@@ -639,6 +763,368 @@ class SelectPluginComponent(BasePluginComponent, HasTraits):
             if event['new'] not in self.labels + ['']:
                 self.selected = event['old']
                 raise ValueError(f"{event['new']} not one of {self.labels}, reverting selection to {event['old']}")  # noqa
+
+
+class UnitSelectPluginComponent(SelectPluginComponent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.add_observe('items', lambda _: self._clear_cache('unit_choices'))
+        self._addl_unit_strings = []
+
+    @cached_property
+    def unit_choices(self):
+        return [u.Unit(lbl) for lbl in self.labels]
+
+    @property
+    def addl_unit_choices(self):
+        return [u.Unit(choice) for choice in self._addl_unit_strings]
+
+    def _selected_changed(self, event):
+        self._clear_cache()
+        if event['new'] in self.labels + ['']:
+            # the string is an exact match, no converting necessary
+            return
+        elif not len(self.labels):
+            raise ValueError("no valid unit choices")
+        try:
+            new_u = u.Unit(event['new'])
+        except ValueError:
+            self.selected = event['old']
+            raise ValueError(f"{event['new']} could not be converted to a valid unit, reverting selection to {event['old']}")  # noqa
+        if new_u not in self.unit_choices:
+            if new_u in self.addl_unit_choices:
+                # append this one (as the valid string representation) to the list of user-choices
+                addl_index = self.addl_unit_choices.index(new_u)
+                self.choices = self.choices + [self._addl_unit_strings[addl_index]]
+                # clear the cache so we can find the appropriate entry in unit_choices
+                self._clear_cache('unit_choices')
+            else:
+                self.selected = event['old']
+                raise ValueError(f"{event['new']} not one of {self.labels}, reverting selection to {event['old']}")  # noqa
+
+        # convert to default string representation from the valid choices
+        ind = self.unit_choices.index(new_u)
+        self.selected = self.labels[ind]
+
+
+class FileImportSelectPluginComponent(SelectPluginComponent):
+    """
+    IMPORTANT: Always accompany with HasFileImportSelect
+    IMPORTANT: currently assumed only one instance per-plugin
+
+    Example template (label and hint are optional)::
+
+      <plugin-file-import
+        title="Import File"
+        hint="Select a file to import"
+        :show="method_selected === 'From File...' && from_file.length === 0"
+        :from_file="from_file"
+        :from_file_message.sync="from_file_message"
+        @click-cancel="method_selected=method_items[0].label"
+        @click-import="file_import_accept()">
+          <g-file-import id="file-uploader"></g-file-import>
+      </plugin-file-import>
+    """
+    def __init__(self, plugin, **kwargs):
+        self._cached_obj = {}
+
+        if "From File..." not in kwargs['manual_options']:
+            kwargs['manual_options'] += ['From File...']
+
+        if not isinstance(plugin, HasFileImportSelect):  # pragma: no cover
+            raise NotImplementedError("plugin must inherit from HasFileImportSelect")
+
+        super().__init__(plugin,
+                         from_file='from_file', from_file_message='from_file_message',
+                         **kwargs)
+
+        self.plugin._file_chooser.observe(self._on_file_path_changed, names='file_path')
+        # reference back here so the plugin can reset to default
+        self.plugin._file_chooser._select_component = self
+
+        def _default_file_parser(path):
+            # by default, just return the file path itself (and allow all files)
+            return '', {path: path}
+
+        self._file_parser = kwargs.pop('file_parser', _default_file_parser)
+        self.add_observe('from_file', self._from_file_changed)
+
+    @property
+    def selected_obj(self):
+        if self.selected == 'From File...':
+            return self._cached_obj.get(self.from_file, self._file_parser(self.from_file)[1])
+        return super().selected_obj
+
+    def _from_file_changed(self, event):
+        if event['new'].startswith('API:'):
+            # object imported from the API: parsing is already handled
+            return
+        if len(event['new']):
+            if event['new'] != self.plugin._file_chooser.file_path:
+                # then need to run the parser or check for valid path
+                if not os.path.exists(event['new']):
+                    if self.selected == 'From File...':
+                        self.select_previous()
+                    raise ValueError(f"{event['new']} is not a valid file path")
+
+                # run through the parsers and check the validity
+                self._on_file_path_changed(event)
+                if self.from_file_message:
+                    if self.selected == 'From File...':
+                        self.select_previous()
+                    raise ValueError(self.from_file_message)
+
+            self.selected = 'From File...'
+
+        elif self.selected == 'From File...':
+            self.select_previous()
+
+    def _on_file_path_changed(self, event):
+        self.from_file_message = 'Checking if file is valid'
+        path = event['new']
+        if (path is not None
+                and not os.path.exists(path)
+                or not os.path.isfile(path)):
+            self.from_file_message = 'File path does not exist'
+            return
+
+        self.from_file_message, self._cached_obj = self._file_parser(path)
+
+    def import_file(self, path):
+        """
+        Select 'From File...' and set the path.
+        """
+        # NOTE: this will trigger self._from_file_changed which in turn will
+        # pass through the parser, raise an error if necessary, and set
+        # self.selected accordingly
+        self.from_file = path
+
+    def import_obj(self, obj):
+        """
+        Import a supported object directly from the API.
+        """
+        msg, self._cached_obj = self._file_parser(obj)
+        if msg:
+            raise ValueError(msg)
+        self.from_file = list(self._cached_obj.keys())[0]
+        self.selected = 'From File...'
+
+
+class HasFileImportSelect(VuetifyTemplate, HubListener):
+    from_file = Unicode().tag(sync=True)
+    from_file_message = Unicode().tag(sync=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # imported here to avoid circular import
+        from jdaviz.configs.default.plugins.data_tools.file_chooser import FileChooser
+
+        start_path = os.environ.get('JDAVIZ_START_DIR', os.path.curdir)
+        self._file_chooser = FileChooser(start_path)
+        self.components = {'g-file-import': self._file_chooser}
+
+    def vue_file_import_accept(self, *args, **kwargs):
+        self.from_file = self._file_chooser.file_path
+
+    def vue_file_import_cancel(self, *args, **kwargs):
+        self._file_chooser._select_component.select_previous()
+        self.from_file = ''
+
+
+class EditableSelectPluginComponent(SelectPluginComponent):
+    """
+    Plugin select with support for renaming, adding, and deleting items (by the user).
+
+    Useful API methods/attributes:
+
+    * :meth:`~SelectPluginComponent.choices`
+    * ``selected``
+    * :meth:`~EditableSelectPluginComponent.add_choice`
+    * :meth:`~EditableSelectPluginComponent.rename_choice`
+    * :meth:`~EditableSelectPluginComponent.remove_choice`
+    """
+
+    """
+    Traitlets (in the object, custom traitlets in the plugin)
+
+    * ``items`` (list of dicts with keys: label, color)
+    * ``selected`` (string)
+    * ``mode`` (string)
+    * ``edit_value`` (string)
+
+    Properties (in the object only):
+
+    * ``labels`` (list of labels corresponding to items)
+
+
+    To use in a plugin:
+
+    * create (empty) traitlets in the plugin
+    * register with all the automatic logic in the plugin's init by passing the string names
+      of the respective traitlets.
+    * use component in plugin template (see below)
+    * refer to properties above based on the interally stored reference to the
+      instantiated object of this component
+    * observe the traitlets created and defined in the plugin, as necessary
+
+    Example template (label and hint are optional)::
+
+      <plugin-editable-select
+        :mode.sync="mode"
+        :edit_value.sync="edit_value"
+        :items="items"
+        :selected.sync="selected"
+        label="Label"
+        hint="Select an item to modify."
+      </plugin-editable-select>
+    """
+    def __init__(self, *args, **kwargs):
+        """
+        Parameters
+        ----------
+        plugin
+            the parent plugin object
+        items : str
+            the name of the items traitlet defined in ``plugin``
+        selected : str
+            the name of the selected traitlet defined in ``plugin``
+        edit_value : str
+            the name of the traitlet containing the temporary edit value defined in ``plugin``
+        manual_options : list
+            list of entries present before user-modification
+        name : str
+            the user-friendly name of the items, used in error message in place of "entry"
+        on_add : callable
+            callback when a new item is added, but before the selection is updated
+        on_add_after_selection : callable
+            callback when a new item is added and the selection is updated
+        on_rename : callable
+            callback when an item is renamed, but before the selection is updated
+        on_rename_after_selection : callable
+            callback when an item is renamed and the selection is updated
+        on_remove : callable
+            callback when an item is removed, but before the selection is updated
+        on_remove_after_selection : callable
+            callback when an item is removed and the selection is updated
+        """
+        super().__init__(*args, **kwargs)
+        if self.is_multiselect:
+            self._multiselect_changed()
+        self.add_observe(kwargs.get('mode'), self._mode_changed)
+        self.mode = 'select'  # select, rename, add
+        self._name = kwargs.get('name', 'entry')  # used for error messages
+        self._on_add = kwargs.get('on_add', lambda *args: None)
+        self._on_add_after_selection = kwargs.get('on_add_after_selection', lambda *args: None)
+        self._on_rename = kwargs.get('on_rename', lambda *args: None)
+        self._on_rename_after_selection = kwargs.get('on_rename_after_selection', lambda *args: None)  # noqa
+        self._on_remove = kwargs.get('on_remove', lambda *args: None)
+        self._on_remove_after_selection = kwargs.get('on_remove_after_selection', lambda *args: None)  # noqa
+
+    def _multiselect_changed(self):
+        # already subscribed to traitlet by SelectPluginComponent
+        if self.multiselect:
+            raise ValueError("EditableSelectPluginComponent does not support multiselect")
+
+    def _selected_changed(self, event):
+        super()._selected_changed(event)
+        self.edit_value = self.selected
+
+    def _mode_changed(self, event):
+        if self.mode == 'rename:accept':
+            try:
+                self.rename_choice(self.selected, self.edit_value)
+            except ValueError as e:
+                self.hub.broadcast(SnackbarMessage(f"Renaming {self._name} failed: {e}",
+                                   sender=self, color="error"))
+            else:
+                self.mode = 'select'
+                self.edit_value = self.selected
+        elif self.mode == 'add:accept':
+            try:
+                self.add_choice(self.edit_value)
+            except ValueError as e:
+                self.hub.broadcast(SnackbarMessage(f"Adding {self._name} failed: {e}",
+                                   sender=self, color="error"))
+            else:
+                self.mode = 'select'
+                self.edit_value = self.selected
+        elif self.mode == 'remove:accept':
+            self.remove_choice(self.edit_value)
+            if len(self.choices):
+                self.mode = 'select'
+            else:
+                self.mode = 'add'
+
+    def _update_items(self):
+        self.items = [{"label": opt} for opt in self._manual_options]
+
+    def _check_new_choice(self, label):
+        if not len(label):
+            raise ValueError("new choice must not be blank")
+        if label in self.choices:
+            raise ValueError(f"'{label}' is already a valid choice")
+
+    def add_choice(self, label, set_as_selected=True):
+        """
+        Add a new entry/choice.
+
+        Parameters
+        ----------
+        * label : str
+            label of the new entry, must not already be one of the choices
+        * set_as_selected : bool
+            whether to immediately set the new entry as the selected entry
+        """
+        self._check_new_choice(label)
+        self._manual_options += [label]
+        self._update_items()
+        self._on_add(label)
+        if set_as_selected:
+            self.selected = label
+        self._on_add_after_selection(label)
+
+    def remove_choice(self, label=None):
+        """
+        Remove an existing entry.
+
+        Parameters
+        ----------
+        * label : str
+            label of an existing entry.  If not provided, will default to the currently selected
+            entry
+        """
+        if label is None:
+            label = self.selected
+        if label not in self.choices:
+            raise ValueError(f"'{label}' not one of available choices ({self.choices})")
+        self._manual_options.remove(label)
+        self._update_items()
+        self._on_remove(label)
+        self._apply_default_selection(skip_if_current_valid=True)
+        self._on_remove_after_selection(label)
+
+    def rename_choice(self, old, new):
+        """
+        Rename an existing entry.
+
+        Parameters
+        ----------
+        * old : str
+            label of the existing entry to modify
+        * new : str
+            new label.  Must not be another existing entry.
+        """
+        if old not in self.choices:
+            raise ValueError(f"'{old}' not one of available choices ({self.choices})")
+        self._check_new_choice(new)
+        was_selected = self.selected == old
+        self._manual_options[self._manual_options.index(old)] = new
+        self._update_items()
+        self._on_rename(old, new)
+        if was_selected:
+            self.selected = new
+        self._on_rename_after_selection(old, new)
 
 
 class LayerSelect(SelectPluginComponent):
@@ -657,7 +1143,7 @@ class LayerSelect(SelectPluginComponent):
     """
 
     """
-    Traitlets (in the object, custom traitlets in the plugin
+    Traitlets (in the object, custom traitlets in the plugin)
 
     * ``items`` (list of dicts with keys: label, color)
     * ``selected`` (string)
@@ -691,7 +1177,7 @@ class LayerSelect(SelectPluginComponent):
     """
     def __init__(self, plugin, items, selected, viewer,
                  multiselect=None,
-                 default_text=None, manual_options=[], allowed_type=None,
+                 default_text=None, manual_options=[],
                  default_mode='first'):
         """
         Parameters
@@ -883,8 +1369,7 @@ class SubsetSelect(SelectPluginComponent):
 
     * create (empty) traitlets in the plugin
     * register with all the automatic logic in the plugin's init by passing the string names
-      of the respective traitlets.  Pass ``allowed_type='spectral'`` or ``allowed_type='spatial'``
-      to only support spectral or spatial subsets, respectively.
+      of the respective traitlets.
     * use component in plugin template (see below)
     * refer to properties above based on the interally stored reference to the
       instantiated object of this component
@@ -901,8 +1386,8 @@ class SubsetSelect(SelectPluginComponent):
       />
 
     """
-    def __init__(self, plugin, items, selected, selected_has_subregions=None,
-                 viewers=None, default_text=None, manual_options=[], allowed_type=None,
+    def __init__(self, plugin, items, selected, multiselect=None, selected_has_subregions=None,
+                 viewers=None, default_text=None, manual_options=[], filters=[],
                  default_mode='default_text'):
         """
         Parameters
@@ -921,26 +1406,23 @@ class SubsetSelect(SelectPluginComponent):
         default_text : str or None
             the text to show for no selection.  If not provided or None, no entry will be provided
             in the dropdown for no selection.
-        manual_options: list
+        manual_options : list
             list of options to provide that are not automatically populated by subsets.  If
             ``default`` text is provided but not in ``manual_options`` it will still be included as
             the first item in the list.
-        allowed_type : str or None
-            whether to filter to 'spatial' or 'spectral' types of subsets.  If not provided or None,
-            will include both entries.
+        filters : list
+            list of strings (for built-in filters) or callables to filter to only valid options.
         """
         super().__init__(plugin,
                          items=items,
                          selected=selected,
+                         multiselect=multiselect,
+                         filters=filters,
                          selected_has_subregions=selected_has_subregions,
                          viewers=viewers,
                          default_text=default_text,
                          manual_options=manual_options,
                          default_mode=default_mode)
-
-        if allowed_type not in [None, 'spatial', 'spectral']:
-            raise ValueError("allowed_type must be None, 'spatial', or 'spectral'")
-        self._allowed_type = allowed_type
 
         if selected_has_subregions is not None:
             self.selected_has_subregions = False
@@ -964,8 +1446,8 @@ class SubsetSelect(SelectPluginComponent):
             for layer in viewer.layers:
                 if layer.layer.label == subset.label:
                     color = layer.state.color
-                    subset_type = _subset_type(subset)
-                    return {"label": subset.label, "color": color, "type": subset_type}
+                    type = get_subset_type(subset)
+                    return {"label": subset.label, "color": color, "type": type}
         return {"label": subset.label, "color": False, "type": False}
 
     def _delete_subset(self, subset):
@@ -975,14 +1457,29 @@ class SubsetSelect(SelectPluginComponent):
         if self.selected not in self.labels:
             self._apply_default_selection()
 
-    def _update_subset(self, subset, attribute=None):
-        if self._allowed_type is not None and _subset_type(subset) != self._allowed_type:
-            return
+    def _is_valid_item(self, subset):
+        def is_spectral(subset):
+            return get_subset_type(subset) == 'spectral'
 
+        def is_spatial(subset):
+            return get_subset_type(subset) == 'spatial'
+
+        def is_not_composite(subset):
+            return not hasattr(subset.subset_state, 'state1')
+
+        def is_not_annulus(subset):
+            # this will be considered "not an annulus" if it is composite, even
+            # if that composite subset contains an annulus
+            return (not is_not_composite(subset)
+                    or not isinstance(subset.subset_state.roi, CircularAnnulusROI))
+
+        return super()._is_valid_item(subset, locals())
+
+    def _update_subset(self, subset, attribute=None):
         if subset.label not in self.labels:
             # NOTE: this logic will need to be revisited if generic renaming of subsets is added
             # see https://github.com/spacetelescope/jdaviz/pull/1175#discussion_r829372470
-            if subset.label.startswith('Subset'):
+            if subset.label.startswith('Subset') and self._is_valid_item(subset):
                 # NOTE: += will not trigger traitlet update
                 self.items = self.items + [self._subset_to_dict(subset)]  # noqa
         else:
@@ -997,44 +1494,62 @@ class SubsetSelect(SelectPluginComponent):
                               else self._subset_to_dict(subset)
                               for s in self.items]
 
-        if attribute == 'subset_state' and subset.label == self.selected:
+        if (attribute == 'subset_state' and
+            ((self.is_multiselect and subset.label in self.selected)
+             or (subset.label == self.selected))):
             # updated the currently selected subset
             self._clear_cache("selected_obj", "selected_item")
             self._update_has_subregions()
 
     def _update_has_subregions(self):
         if "selected_has_subregions" in self._plugin_traitlets.keys():
-            if self.selected in self._manual_options:
+            if self.is_multiselect:
+                self.selected_has_subregions = False
+            elif (
+                self.selected in self._manual_options or
+                not hasattr(self.selected_obj, 'subregions')
+            ):
                 self.selected_has_subregions = False
             else:
                 self.selected_has_subregions = len(self.selected_obj.subregions) > 1
 
     @cached_property
     def selected_obj(self):
-        if self.selected in self.manual_options or self.selected not in self.labels:
+        if (
+            self.selected in self.manual_options or
+            self.selected not in self.labels or
+            self.selected is None
+        ):
             return None
-        subset_type = self.selected_item['type']
-        # NOTE: we use reference names here instead of IDs since get_subsets_from_viewer requires
-        # that.  For imviz, this will mean we won't be able to loop through each of the viewers,
-        # but the original viewer should have access to all the subsets.
-        for viewer_ref in self.viewer_refs:
-            match = self.app.get_subsets_from_viewer(viewer_ref,
-                                                     subset_type=subset_type).get(self.selected)
-            if match is not None:
-                return match
+        return self.app.get_subsets(self.selected)
 
     @property
     def selected_subset_state(self):
+        if self.is_multiselect:
+            subset_states = {}
+            for select_subset in self.selected:
+                if select_subset == self.default_text:
+                    continue
+                subset_group = [s for s in self.app.data_collection.subset_groups if
+                                s.label == select_subset][0]
+                subset_states[select_subset] = subset_group.subset_state
+            return subset_states
         subset_group = [s for s in self.app.data_collection.subset_groups if
                         s.label == self.selected][0]
         return subset_group.subset_state
 
     @property
     def selected_subset_mask(self):
-        get_data_kwargs = {'data_label': self.plugin.dataset.selected,
-                           'subset_to_apply': self.selected}
+        if self.is_multiselect:
+            raise NotImplementedError("Retrieving subset mask is not"
+                                      " supported in multiselect mode")
+        get_data_kwargs = {'data_label': self.plugin.dataset.selected}
+        if 'is_spectral' in self.filters:
+            get_data_kwargs['spectral_subset'] = self.selected
+        elif 'is_spatial' in self.filters:
+            get_data_kwargs['spatial_subset'] = self.selected
 
-        if self.app.config == 'cubeviz' and self._allowed_type == 'spectral':
+        if self.app.config == 'cubeviz' and 'is_spectral' in self.filters:
             viewer_ref = getattr(self.plugin,
                                  '_default_spectrum_viewer_reference_name',
                                  self.viewers[0].reference_id)
@@ -1045,6 +1560,9 @@ class SubsetSelect(SelectPluginComponent):
         return subset.mask
 
     def selected_min_max(self, spectrum1d):
+        if self.is_multiselect:
+            raise TypeError("This action cannot be done when multiselect is active")
+
         if self.selected_obj is None:
             return np.nanmin(spectrum1d.spectral_axis), np.nanmax(spectrum1d.spectral_axis)
         if self.selected_item.get('type') != 'spectral':
@@ -1090,7 +1608,7 @@ class SpectralSubsetSelectMixin(VuetifyTemplate, HubListener):
                                             'spectral_subset_selected_has_subregions',
                                             viewers=[spectrum_viewer],
                                             default_text='Entire Spectrum',
-                                            allowed_type='spectral')
+                                            filters=['is_spectral'])
 
 
 class SpatialSubsetSelectMixin(VuetifyTemplate, HubListener):
@@ -1126,8 +1644,8 @@ class SpatialSubsetSelectMixin(VuetifyTemplate, HubListener):
                                            'spatial_subset_items',
                                            'spatial_subset_selected',
                                            'spatial_subset_selected_has_subregions',
-                                           default_text='No Subset',
-                                           allowed_type='spatial')
+                                           default_text='Entire Cube',
+                                           filters=['is_spatial'])
 
 
 class DatasetSpectralSubsetValidMixin(VuetifyTemplate, HubListener):
@@ -1221,6 +1739,7 @@ class ViewerSelect(SelectPluginComponent):
 
         self.hub.subscribe(self, ViewerAddedMessage, handler=self._on_viewers_changed)
         self.hub.subscribe(self, ViewerRemovedMessage, handler=self._on_viewers_changed)
+        self.hub.subscribe(self, ViewerRenamedMessage, handler=self._on_viewers_changed)
 
         # initialize viewer_items from original viewers
         self._on_viewers_changed()
@@ -1289,6 +1808,13 @@ class ViewerSelect(SelectPluginComponent):
                     return
         return super()._selected_changed(event)
 
+    def add_filter(self, *filters):
+        super().add_filter(*filters)
+        if 'reference_has_wcs' in filters:
+            # reference data can change whenever data is added OR removed from a viewer
+            self.hub.subscribe(self, AddDataMessage, handler=self._on_viewers_changed)
+            self.hub.subscribe(self, RemoveDataMessage, handler=self._on_viewers_changed)
+
     def _is_valid_item(self, viewer):
         def is_spectrum_viewer(viewer):
             return 'ProfileView' in viewer.__class__.__name__
@@ -1299,16 +1825,20 @@ class ViewerSelect(SelectPluginComponent):
         def is_image_viewer(viewer):
             return 'ImageView' in viewer.__class__.__name__
 
+        def reference_has_wcs(viewer):
+            return getattr(viewer.state.reference_data, 'coords', None) is not None
+
         return super()._is_valid_item(viewer, locals())
 
     @observe('filters')
     def _on_viewers_changed(self, msg=None):
         # NOTE: _on_viewers_changed is passed without a msg object during init
         # list of dictionaries with id, ref, ref_or_id
+        was_empty = len(self.items) == 0
         manual_items = [{'label': label} for label in self.manual_options]
         self.items = manual_items + [{k: v for k, v in vd.items() if k != 'viewer'}
                                      for vd in self.viewer_dicts if self._is_valid_item(vd['viewer'])] # noqa
-        self._apply_default_selection()
+        self._apply_default_selection(skip_if_current_valid=not was_empty)
 
 
 class ViewerSelectMixin(VuetifyTemplate, HubListener):
@@ -1407,11 +1937,13 @@ class DatasetSelect(SelectPluginComponent):
             the name of the items traitlet defined in ``plugin``
         selected : str
             the name of the selected traitlet defined in ``plugin``
+        filters : list
+            list of strings (for built-in filters) or callables to filter to only valid options.
         default_text : str or None
             the text to show for no selection.  If not provided or None, no entry will be provided
             in the dropdown for no selection.
         manual_options: list
-            list of options to provide that are not automatically populated by subsets.  If
+            list of options to provide that are not automatically populated by datasets.  If
             ``default`` text is provided but not in ``manual_options`` it will still be included as
             the first item in the list.
         """
@@ -1443,7 +1975,7 @@ class DatasetSelect(SelectPluginComponent):
         # for changes in style, etc, we'll try to filter out extra messages in advance.
         def _subset_update(msg):
             if msg.attribute == 'subset_state':
-                if _subset_type(msg.subset) == 'spatial':
+                if get_subset_type(msg.subset) == 'spatial':
                     self._on_data_changed()
 
         self.hub.subscribe(self, SubsetUpdateMessage,
@@ -1483,15 +2015,21 @@ class DatasetSelect(SelectPluginComponent):
         # from the data collection
         return self.get_object(cls=self.default_data_cls)
 
-    def selected_spectrum_for_spatial_subset(self, spatial_subset=SPATIAL_DEFAULT_TEXT):
+    def selected_spectrum_for_spatial_subset(self,
+                                             spatial_subset=SPATIAL_DEFAULT_TEXT,
+                                             use_display_units=True):
         if spatial_subset == SPATIAL_DEFAULT_TEXT:
             spatial_subset = None
         return self.plugin._specviz_helper.get_data(data_label=self.selected,
-                                                    subset_to_apply=spatial_subset)
+                                                    spatial_subset=spatial_subset,
+                                                    use_display_units=use_display_units)
 
     def _is_valid_item(self, data):
         def not_from_plugin(data):
             return data.meta.get('Plugin', None) is None
+
+        def not_from_this_plugin(data):
+            return data.meta.get('Plugin', None) != self.plugin.__class__.__name__
 
         def not_from_plugin_model_fitting(data):
             return data.meta.get('Plugin', None) != 'ModelFitting'
@@ -1550,7 +2088,7 @@ class DatasetSelect(SelectPluginComponent):
         if getattr(self, '_include_spatial_subsets', False):
             # allow for spatial subsets to be listed
             self.items = self.items + [_dc_to_dict(subset) for subset in self.app.data_collection.subset_groups  # noqa
-                                       if _subset_type(subset) == 'spatial']
+                                       if get_subset_type(subset) == 'spatial']
         self._apply_default_selection()
         # future improvement: only clear cache if the selected data entry was changed?
         self._clear_cache(*self._cached_properties)
@@ -1676,9 +2214,9 @@ class AutoTextFieldMixin(VuetifyTemplate, HubListener):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.auto_label = AddResults(self, 'label',
-                                     'label_default', 'label_auto',
-                                     'label_invalid_msg')
+        self.auto_label = AutoTextField(self, 'label',
+                                        'label_default', 'label_auto',
+                                        'label_invalid_msg')
 
 
 class AddResults(BasePluginComponent):
@@ -1829,31 +2367,52 @@ class AddResults(BasePluginComponent):
         Add ``data_item`` to the app's data_collection according to the default or user-provided
         label and adds to any requested viewers.
         """
+
+        # Note that we can only preserve one of percentile or vmin+vmax
+        ignore_attributes = ("layer", "attribute", "percentile")
+
         if self.label_invalid_msg:
             raise ValueError(self.label_invalid_msg)
 
         if label is None:
             label = self.label
 
-        if replace is None:
-            replace = self.viewer.selected_reference != 'spectrum-viewer'
-
-        if self.label_overwrite and len(self.add_to_viewer_items) <= 2:
+        if self.label_overwrite:
             # the switch for add_to_viewer is hidden, and so the loaded state of the overwritten
             # entry should be the same as the original entry (to avoid deleting reference data)
-            viewer_reference = self.add_to_viewer_items[-1]['reference']
-            viewer_item = self.app._viewer_item_by_reference(viewer_reference)
-            viewer = self.app.get_viewer(viewer_reference)
-            viewer_loaded_labels = [layer.layer.label for layer in viewer.layers]
-            add_to_viewer_selected = viewer_reference if label in viewer_loaded_labels else 'None'  # noqa
-            visible = label in viewer_item['visible_layers']
+            add_to_viewer_refs = []
+            add_to_viewer_vis = []
+            preserved_attributes = []
+            for viewer_select_item in self.add_to_viewer_items[1:]:
+                # index 0 is for "None"
+                viewer_ref = viewer_select_item['reference']
+                viewer_item = self.app._viewer_item_by_reference(viewer_ref)
+                viewer = self.app.get_viewer(viewer_ref)
+                for layer in viewer.layers:
+                    if layer.layer.label != label:
+                        continue
+                    else:
+                        add_to_viewer_refs.append(viewer_ref)
+                        add_to_viewer_vis.append(label in viewer_item['visible_layers'])
+                        preserve_these = {}
+                        for att in layer.state.as_dict():
+                            # Can't set cmap_att, size_att, etc
+                            if att not in ignore_attributes and "_att" not in att:
+                                preserve_these[att] = getattr(layer.state, att)
+                        preserved_attributes.append(preserve_these)
         else:
-            add_to_viewer_selected = self.add_to_viewer_selected
-            visible = True
+            if self.add_to_viewer_selected == 'None':
+                add_to_viewer_refs = []
+                add_to_viewer_vis = []
+                preserved_attributes = []
+            else:
+                add_to_viewer_refs = [self.add_to_viewer_selected]
+                add_to_viewer_vis = [True]
+                preserved_attributes = [{}]
 
         if label in self.app.data_collection:
-            if add_to_viewer_selected != 'None':
-                self.app.remove_data_from_viewer(self.viewer.selected_reference, label)
+            for viewer_ref in add_to_viewer_refs:
+                self.app.remove_data_from_viewer(viewer_ref, label)
             self.app.data_collection.remove(self.app.data_collection[label])
 
         if not hasattr(data_item, 'meta'):
@@ -1863,12 +2422,24 @@ class AddResults(BasePluginComponent):
             data_item.meta['mosviz_row'] = self.app.state.settings['mosviz_row']
         self.app.add_data(data_item, label)
 
-        if add_to_viewer_selected != 'None':
+        for viewer_ref, visible, preserved in zip(add_to_viewer_refs, add_to_viewer_vis,
+                                                  preserved_attributes):
             # replace the contents in the selected viewer with the results from this plugin
-            # TODO: switch to an instance/classname check?
-            self.app.add_data_to_viewer(self.viewer.selected_id,
+            this_viewer = self.app.get_viewer(viewer_ref)
+            if replace is not None:
+                this_replace = replace
+            else:
+                this_replace = isinstance(this_viewer, BqplotImageView)
+
+            self.app.add_data_to_viewer(viewer_ref,
                                         label,
-                                        visible=visible, clear_other_data=replace)
+                                        visible=visible, clear_other_data=this_replace)
+
+            if preserved != {}:
+                layer_state = [layer.state for layer in this_viewer.layers if
+                               layer.layer.label == label][0]
+                for att in preserved:
+                    setattr(layer_state, att, preserved[att])
 
         # update overwrite warnings, etc
         self._on_label_changed()
@@ -1953,9 +2524,10 @@ class PlotOptionsSyncState(BasePluginComponent):
 
     def __repr__(self):
         choices = self.choices
+        glue_name = self._glue_name if isinstance(self._glue_name, str) else ''
         if len(choices):
-            return f"<PlotOptionsSyncState {self._glue_name}={self.value} choices={self.choices} (linked_states: {len(self.linked_states)}/{len(self.subscribed_states)})>"  # noqa
-        return f"<PlotOptionsSyncState {self._glue_name}={self.value} (linked_states: {len(self.linked_states)}/{len(self.subscribed_states)})>"  # noqa
+            return f"<PlotOptionsSyncState {glue_name}={self.value} choices={self.choices} (linked_states: {len(self.linked_states)}/{len(self.subscribed_states)})>"  # noqa
+        return f"<PlotOptionsSyncState {glue_name}={self.value} (linked_states: {len(self.linked_states)}/{len(self.subscribed_states)})>"  # noqa
 
     @property
     def user_api(self):
@@ -1989,6 +2561,12 @@ class PlotOptionsSyncState(BasePluginComponent):
         if self._state_filter is None:
             return True
         return self._state_filter(state)
+
+    def glue_name(self, state):
+        if isinstance(self._glue_name, str):
+            return self._glue_name
+        # also support a callable that takes the state as input and returns a string
+        return self._glue_name(state)
 
     @property
     def subscribed_viewers(self):
@@ -2052,31 +2630,40 @@ class PlotOptionsSyncState(BasePluginComponent):
         return self._linked_states
 
     def _get_glue_value(self, state):
-        if self._glue_name == 'cmap':
-            return getattr(state, self._glue_name).name
-        if self._glue_name in ['contour_visible', 'bitmap_visible']:
+        glue_name = self.glue_name(state)
+        if glue_name == 'cmap':
+            return getattr(state, glue_name).name
+        if glue_name in GLUE_STATES_WITH_HELPERS:
+            return str(getattr(state, glue_name))
+        if glue_name in ('contour_visible', 'bitmap_visible'):
             # return False if the layer itself is not visible.  Setting this object
             # to True will then set both glue_name and visible to True.
-            return getattr(state, self._glue_name) and getattr(state, 'visible')
-        return getattr(state, self._glue_name)
+            return getattr(state, glue_name) and getattr(state, 'visible')
+
+        return getattr(state, glue_name)
 
     def _get_glue_choices(self, state):
-        if self._glue_name == 'cmap':
+        glue_name = self.glue_name(state)
+        if glue_name == 'cmap':
             return [{'text': cmap[0], 'value': cmap[1].name} for cmap in colormaps.members]
-        elif self._glue_name == 'color_mode':
+        if glue_name in GLUE_STATES_WITH_HELPERS:
+            helper = getattr(state, f'{glue_name}_helper')
+            return [{'text': str(choice), 'value': str(choice)} for choice in helper.choices]
+        if glue_name == 'color_mode':
             return [{'text': 'Colormap', 'value': 'Colormaps'},
                     {'text': 'Monochromatic', 'value': 'One color per layer'}]
-        else:
-            values, labels = _get_glue_choices(state, self._glue_name)
-            return [{'text': l, 'value': v} for v, l in zip(values, labels)]
+
+        values, labels = _get_glue_choices(state, glue_name)
+        return [{'text': l, 'value': v} for v, l in zip(values, labels)]
 
     def _on_viewer_layer_changed(self, msg=None):
         self._clear_cache(*self._cached_properties)
 
         # clear existing callbacks - we'll re-create those we need later
         for state in self.linked_states:
-            state.remove_callback(self._glue_name, self._on_glue_value_changed)
-            if self._glue_name in ['contour_visible', 'bitmap_visible']:
+            glue_name = self.glue_name(state)
+            state.remove_callback(glue_name, self._on_glue_value_changed)
+            if glue_name in ['contour_visible', 'bitmap_visible']:
                 state.remove_callback('visible', self._on_glue_layer_visible_changed)
 
         in_subscribed_states = False
@@ -2090,7 +2677,8 @@ class PlotOptionsSyncState(BasePluginComponent):
             for state in states:
                 if state is None or not self.state_filter(state):
                     continue
-                if self._glue_name is None or not hasattr(state, self._glue_name):
+                glue_name = self.glue_name(state)
+                if glue_name is None or not hasattr(state, glue_name):
                     continue
 
                 in_subscribed_states = True
@@ -2098,13 +2686,13 @@ class PlotOptionsSyncState(BasePluginComponent):
                     icons.append(icon)
                 current_glue_values.append(self._get_glue_value(state))
                 self._linked_states.append(state)  # these will be iterated when value is set
-                state.add_callback(self._glue_name, self._on_glue_value_changed)
-                if self._glue_name in ['contour_visible', 'bitmap_visible']:
+                state.add_callback(glue_name, self._on_glue_value_changed)
+                if glue_name in ['contour_visible', 'bitmap_visible']:
                     state.add_callback('visible', self._on_glue_layer_visible_changed)
 
                 if self.sync.get('choices') is None and \
-                        (hasattr(getattr(type(state), self._glue_name), 'get_display_func')
-                         or self._glue_name == 'cmap'):
+                        (hasattr(getattr(type(state), glue_name), 'get_display_func')
+                         or glue_name == 'cmap'):
                     # then we can access and populate the choices.  We are assuming here
                     # that each state-instance with this same name will have the same
                     # choices and that those will not change.  If we ever hookup options
@@ -2141,17 +2729,22 @@ class PlotOptionsSyncState(BasePluginComponent):
 
         self._processing_change_to_glue = True
         for glue_state in self.linked_states:
-            if self._glue_name == 'cmap':
+            glue_name = self.glue_name(glue_state)
+            if glue_name == 'cmap':
                 cmap = None
                 for member in colormaps.members:
                     if member[1].name == msg['new']:
                         cmap = member[1]
                         break
-                setattr(glue_state, self._glue_name, cmap)
+                setattr(glue_state, glue_name, cmap)
+            elif glue_name in GLUE_STATES_WITH_HELPERS:
+                helper = getattr(glue_state, f'{glue_name}_helper')
+                value = [choice for choice in helper.choices if str(choice) == msg['new']][0]
+                setattr(glue_state, glue_name, value)
             else:
-                setattr(glue_state, self._glue_name, msg['new'])
+                setattr(glue_state, glue_name, msg['new'])
 
-            if self._glue_name in ['bitmap_visible', 'contour_visible'] and msg['new'] is True:
+            if glue_name in ['bitmap_visible', 'contour_visible'] and msg['new'] is True:
                 # ensure that the layer is also visible
                 if not glue_state.visible:
                     setattr(glue_state, 'visible', msg['new'])
@@ -2191,6 +2784,8 @@ class PlotOptionsSyncState(BasePluginComponent):
         self._processing_change_from_glue = True
         if "Colormap" in value.__class__.__name__:
             value = value.name
+        elif self._glue_name in GLUE_STATES_WITH_HELPERS:
+            value = str(value)
         elif isinstance(self.value, (int, float)) and self._glue_name != 'percentile':
             # glue might pass us ints for float or vice versa, but our traitlets care
             # so let's cast to the type expected by the traitlet to avoid having to
@@ -2293,6 +2888,8 @@ class Table(PluginSubcomponent):
     """
     template_file = __file__, "../components/plugin_table.vue"
 
+    _default_values_by_colname = {}
+
     headers_visible = List([]).tag(sync=True)  # list of strings
     headers_avail = List([]).tag(sync=True)   # list of strings
     items = List().tag(sync=True)  # list of dictionaries, pass single dict to add_row
@@ -2300,6 +2897,21 @@ class Table(PluginSubcomponent):
     def __init__(self, plugin, *args, **kwargs):
         self._qtable = None
         super().__init__(plugin, 'Table', *args, **kwargs)
+
+    def default_value_for_column(self, colname=None, value=None):
+        if colname in self._default_values_by_colname:
+            return self._default_values_by_colname.get(colname)
+        if isinstance(value, (tuple, list)):
+            return [self.default_value_for_column(value=v) for v in value]
+        if isinstance(value, (float, int)):
+            return np.nan
+        if isinstance(value, str):
+            return ''
+        return None
+
+    @staticmethod
+    def _new_col_visible(colname):
+        return True
 
     def add_item(self, item):
         """
@@ -2351,12 +2963,26 @@ class Table(PluginSubcomponent):
         if self._qtable is None:
             self._qtable = QTable([item])
         else:
-            # NOTE: this does not support adding columns that did not exist in the first
-            # call to add_row since the last call to clear_table
+            # add any missing columns with a default value for all previous rows
+            for colname, value in item.items():
+                if colname in self._qtable.colnames:
+                    continue
+                default_value = self.default_value_for_column(colname=colname,
+                                                              value=value)
+                self._qtable.add_column(default_value, name=colname)
+
             self._qtable.add_row(item)
+
+        missing_headers = [k for k in item.keys() if k not in self.headers_avail]
+        if len(missing_headers):
+            self.headers_avail = self.headers_avail + missing_headers
+            self.headers_visible = self.headers_visible + [m for m in missing_headers if self._new_col_visible(m)]  # noqa
 
         # clean data to show in the UI
         self.items = self.items + [{k: json_safe(k, v) for k, v in item.items()}]
+
+    def __len__(self):
+        return len(self.items)
 
     def clear_table(self):
         """
@@ -2415,3 +3041,125 @@ class TableMixin(VuetifyTemplate, HubListener):
         Export the QTable representation of the table.
         """
         return self.table.export_table()
+
+
+class Plot(PluginSubcomponent):
+    """
+    Plot subcomponent.  For most cases where a plugin only requires a single plot, use the mixin
+    instead.
+
+    To use in a plugin, define ``plugin.plot = Plot(plugin)``, create a ``plot_widget`` Unicode
+    traitlet, and set ``plugin.plot_widget = 'IPY_MODEL_'+self.plot.model_id``.
+
+    To render in the plugin's vue file::
+
+      <jupyter-widget :widget="plot_widget"></jupyter-widget>
+
+    """
+    template_file = __file__, "../components/plugin_plot.vue"
+
+    figure = Any().tag(sync=True, **widget_serialization)
+
+    def __init__(self, plugin, *args, **kwargs):
+        super().__init__(plugin, 'Plot', *args, **kwargs)
+        self.figure = bqplot.Figure()
+        self._marks = {}
+
+        self.figure.axes = [bqplot.Axis(scale=bqplot.LinearScale(), label='x'),
+                            bqplot.Axis(scale=bqplot.LinearScale(),
+                                        orientation='vertical', label='y')]
+
+        self.figure.title_style = {'font-size': '12px'}
+        self.figure.fig_margin = {'top': 60, 'bottom': 60, 'left': 40, 'right': 10}
+
+        plugin.bqplot_figs_resize += [self.figure]
+
+    @property
+    def marks(self):
+        return self._marks
+
+    def clear_marks(self, *mark_labels):
+        for mark_label, mark in self.marks.items():
+            if mark_label in mark_labels:
+                if isinstance(mark, bqplot.Bins):
+                    # NOTE: cannot completely empty samples
+                    # may want to also set mark.visible=False manually if clearing
+                    # (but this will still at least clear any internal arrays)
+                    mark.samples = [0]
+                else:
+                    mark.x, mark.y = [], []
+
+    def clear_all_marks(self):
+        self.clear_marks(*self.marks.keys())
+
+    def _add_mark(self, cls, label, xnorm=False, ynorm=False, **kwargs):
+        if label in self._marks:
+            raise ValueError(f"mark with label '{label}' already exists")
+        mark = cls(scales={'x': bqplot.LinearScale() if xnorm else self.figure.axes[0].scale,
+                           'y': bqplot.LinearScale() if ynorm else self.figure.axes[1].scale},
+                   **kwargs)
+        self.figure.marks = self.figure.marks + [mark]
+        self._marks[label] = mark
+        return mark
+
+    def add_line(self, label, x=[], y=[], xnorm=False, ynorm=False, **kwargs):
+        return self._add_mark(bqplot.Lines, label, x=x, y=y,
+                              xnorm=xnorm, ynorm=ynorm,
+                              colors=kwargs.pop('color', kwargs.pop('colors', 'gray')),
+                              **kwargs)
+
+    def add_scatter(self, label, x=[], y=[], xnorm=False, ynorm=False, **kwargs):
+        return self._add_mark(bqplot.Scatter, label, x=x, y=y,
+                              xnorm=xnorm, ynorm=ynorm,
+                              colors=kwargs.pop('color', kwargs.pop('colors', 'gray')),
+                              **kwargs)
+
+    def add_bins(self, label, sample=[0], bins=2, density=True, **kwargs):
+        # NOTE: initializing with bins=1 breaks the figure until a resize event
+        return self._add_mark(bqplot.Bins, label, sample=sample, bins=bins,
+                              density=density,
+                              colors=kwargs.pop('color', kwargs.pop('colors', 'gray')),
+                              **kwargs)
+
+    def set_xlims(self, x_min=None, x_max=None):
+        ax = self.figure.axes[0]
+        if x_min is None:
+            x_min = ax.scale.min
+        if x_max is None:
+            x_max = ax.scale.max
+        ax.scale.min, ax.scale.max = x_min, x_max
+
+    def set_ylims(self, y_min=None, y_max=None):
+        ax = self.figure.axes[1]
+        if y_min is None:
+            y_min = ax.scale.min
+        if y_max is None:
+            y_max = ax.scale.max
+        ax.scale.min, ax.scale.max = y_min, y_max
+
+
+class PlotMixin(VuetifyTemplate, HubListener):
+    """
+    Plot subcomponent mixin.
+
+    In addition to ``plot``, this provides the following methods at the plugin-level:
+
+    * :meth:`clear_plot`
+
+    To render in the plugin's vue file::
+
+      <jupyter-widget :widget="plot_widget"></jupyter-widget>
+
+    """
+    plot_widget = Unicode().tag(sync=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.plot = Plot(self)
+        self.plot_widget = 'IPY_MODEL_'+self.plot.model_id
+
+    def clear_plot(self):
+        """
+        Clear all data from the current plot.
+        """
+        self.plot.clear_plot()

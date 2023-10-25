@@ -12,7 +12,7 @@ from jdaviz.core.linelists import get_available_linelists
 def test_line_lists(specviz_helper):
     spec = Spectrum1D(flux=np.random.rand(100)*u.Jy,
                       spectral_axis=np.arange(6000, 7000, 10)*u.AA)
-    specviz_helper.load_spectrum(spec)
+    specviz_helper.load_data(spec)
 
     lt = QTable()
     lt['linename'] = ['O III', 'Halpha']
@@ -47,13 +47,13 @@ def test_line_lists(specviz_helper):
 
 def test_redshift(specviz_helper, spectrum1d):
     # Also test that plugin is disabled before data is loaded.
-    plg = specviz_helper.plugins['Line Lists']
-    assert plg._obj.disabled_msg
+    ll_plugin = specviz_helper.plugins['Line Lists']._obj
+    assert ll_plugin.disabled_msg
 
     label = "Test 1D Spectrum"
-    specviz_helper.load_spectrum(spectrum1d, data_label=label)
+    specviz_helper.load_data(spectrum1d, data_label=label)
 
-    assert not plg._obj.disabled_msg
+    assert not ll_plugin.disabled_msg
 
     lt = QTable()
     lt['linename'] = ['O III', 'Halpha']
@@ -63,8 +63,7 @@ def test_redshift(specviz_helper, spectrum1d):
     with pytest.warns(UserWarning, match='per line/list redshifts not supported, use viz.set_redshift'):  # noqa
         specviz_helper.load_line_list(lt)
 
-    ll_plugin = specviz_helper.app.get_tray_item_from_name('g-line-list')
-    # fake the plugin to be opened so that all updates run
+    # open the plugin so that all updates run
     ll_plugin.plugin_opened = True
     line = ll_plugin.list_contents['Test List']['lines'][0]
     assert_allclose(line['obs'], line['rest'])
@@ -102,7 +101,7 @@ def test_redshift(specviz_helper, spectrum1d):
 def test_load_available_preset_lists(specviz_helper, spectrum1d):
     """ Loads all available line lists and checks the medium requirement """
     label = "Test 1D Spectrum"
-    specviz_helper.load_spectrum(spectrum1d, data_label=label)
+    specviz_helper.load_data(spectrum1d, data_label=label)
 
     # Check to make sure we got our line lists
     available_linelists = get_available_linelists()
@@ -125,7 +124,7 @@ def test_load_available_preset_lists(specviz_helper, spectrum1d):
 
 def test_line_identify(specviz_helper, spectrum1d):
     label = "Test 1D Spectrum"
-    specviz_helper.load_spectrum(spectrum1d, data_label=label)
+    specviz_helper.load_data(spectrum1d, data_label=label)
 
     lt = QTable()
     lt['linename'] = ['O III', 'Halpha']

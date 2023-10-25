@@ -1,4 +1,8 @@
+import astropy.units as u
+
 __all__ = ['UserApiWrapper', 'PluginUserApi']
+
+_internal_attrs = ('_obj', '_expose', '_readonly', '__doc__')
 
 
 class UserApiWrapper:
@@ -23,27 +27,32 @@ class UserApiWrapper:
         return self._obj.__eq__(other)
 
     def __getattr__(self, attr):
-        if attr in ['_obj', '_expose', '_readonly', '__doc__'] or attr not in self._expose:
+        if attr in _internal_attrs or attr not in self._expose:
             return super().__getattribute__(attr)
 
         exp_obj = getattr(self._obj, attr)
         return getattr(exp_obj, 'user_api', exp_obj)
 
     def __setattr__(self, attr, value):
-        if attr in ['_obj', '_expose', '_readonly', '__doc__'] or attr not in self._expose:
+        if attr in _internal_attrs or attr not in self._expose:
             return super().__setattr__(attr, value)
 
         if attr in self._readonly:
             raise AttributeError("cannot set read-only item")
 
         exp_obj = getattr(self._obj, attr)
+        if hasattr(exp_obj, '__call__'):
+            raise AttributeError(f"{attr} is a callable, cannot set to a value.  See help({attr}) for input arguments.")  # noqa
         from jdaviz.core.template_mixin import (SelectPluginComponent,
+                                                UnitSelectPluginComponent,
                                                 PlotOptionsSyncState,
                                                 AddResults,
                                                 AutoTextField)
         if isinstance(exp_obj, SelectPluginComponent):
             # this allows setting the selection directly without needing to access the underlying
             # .selected traitlet
+            if isinstance(exp_obj, UnitSelectPluginComponent) and isinstance(value, u.Unit):
+                value = value.to_string()
             exp_obj.selected = value
             return
         elif isinstance(exp_obj, AddResults):
@@ -81,6 +90,8 @@ class PluginUserApi(UserApiWrapper):
     """
     def __init__(self, plugin, expose=[], readonly=[]):
         expose = list(set(list(expose) + ['open_in_tray', 'show']))
+        if plugin.uses_active_status:
+            expose += ['keep_active', 'as_active']
         super().__init__(plugin, expose, readonly)
 
     def __repr__(self):

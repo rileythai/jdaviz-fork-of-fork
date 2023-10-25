@@ -3,22 +3,36 @@ import warnings
 import numpy as np
 from astropy import table
 from astropy import units as u
-from glue.core import BaseData
-from glue.core.subset import Subset
+from astropy.nddata import StdDevUncertainty, VarianceUncertainty, InverseVariance
+from echo import delay_callback
 from glue.config import data_translator
-from glue_jupyter.bqplot.profile import BqplotProfileView
+from glue.core import BaseData
 from glue.core.exceptions import IncompatibleAttribute
+from glue.core.units import UnitConverter
+from glue.core.subset import Subset
+from glue.core.subset_group import GroupedSubset
+from glue_astronomy.spectral_coordinates import SpectralCoordinates
+from glue_jupyter.bqplot.profile import BqplotProfileView
 from matplotlib.colors import cnames
 from specutils import Spectrum1D
 
-from jdaviz.core.events import SpectralMarksChangedMessage, LineIdentifyMessage
+from jdaviz.core.events import SpectralMarksChangedMessage, LineIdentifyMessage, SnackbarMessage
 from jdaviz.core.registries import viewer_registry
 from jdaviz.core.marks import SpectralLine, LineUncertainties, ScatterMask, OffscreenLinesMarks
 from jdaviz.core.linelists import load_preset_linelist, get_available_linelists
 from jdaviz.core.freezable_state import FreezableProfileViewerState
 from jdaviz.configs.default.plugins.viewers import JdavizViewerMixin
+from jdaviz.utils import get_subset_type
 
 __all__ = ['SpecvizProfileView']
+
+uc = UnitConverter()
+
+uncertainty_str_to_cls_mapping = {
+    "std": StdDevUncertainty,
+    "var": VarianceUncertainty,
+    "ivar": InverseVariance
+}
 
 
 @viewer_registry("specviz-profile-viewer", label="Profile 1D (Specviz)")
@@ -26,7 +40,7 @@ class SpecvizProfileView(JdavizViewerMixin, BqplotProfileView):
     # categories: zoom resets, zoom, pan, subset, select tools, shortcuts
     tools_nested = [
                     ['jdaviz:homezoom', 'jdaviz:prevzoom'],
-                    ['jdaviz:boxzoom', 'jdaviz:xrangezoom'],
+                    ['jdaviz:boxzoom', 'jdaviz:xrangezoom', 'jdaviz:yrangezoom'],
                     ['jdaviz:panzoom', 'jdaviz:panzoom_x', 'jdaviz:panzoom_y'],
                     ['bqplot:xrange'],
                     ['jdaviz:selectline'],
@@ -38,10 +52,11 @@ class SpecvizProfileView(JdavizViewerMixin, BqplotProfileView):
     _state_cls = FreezableProfileViewerState
 
     def __init__(self, *args, **kwargs):
+        default_tool_priority = kwargs.pop('default_tool_priority', [])
         super().__init__(*args, **kwargs)
 
         self._subscribe_to_layers_update()
-        self.initialize_toolbar(default_tool_priority=['jdaviz:selectslice'])
+        self.initialize_toolbar(default_tool_priority=default_tool_priority)
         self._offscreen_lines_marks = OffscreenLinesMarks(self)
         self.figure.marks = self.figure.marks + self._offscreen_lines_marks.marks
 
@@ -350,9 +365,36 @@ class SpecvizProfileView(JdavizViewerMixin, BqplotProfileView):
         result : bool
             `True` if successful, `False` otherwise.
         """
+        # If this is the first loaded data, set things up for unit conversion.
+        if len(self.layers) == 0:
+            reset_plot_axes = True
+        else:
+            # Check if the new data flux unit is actually compatible since flux not linked.
+            try:
+                uc.to_unit(data, data.find_component_id("flux"), [1, 1],
+                           u.Unit(self.state.y_display_unit))  # Error if incompatible
+            except Exception as err:
+                # Raising exception here introduces a dirty state that messes up next load_data
+                # but not raising exception also causes weird behavior unless we remove the data
+                # completely.
+                self.session.hub.broadcast(SnackbarMessage(
+                    f"Failed to load {data.label}, so removed it: {repr(err)}",
+                    sender=self, color='error'))
+                self.jdaviz_app.data_collection.remove(data)
+                return False
+            reset_plot_axes = False
+
         # The base class handles the plotting of the main
         # trace representing the spectrum itself.
         result = super().add_data(data, color, alpha, **layer_state)
+
+        if reset_plot_axes:
+            x_units = data.get_component(self.state.x_att.label).units
+            y_units = data.get_component("flux").units
+            with delay_callback(self.state, "x_display_unit", "y_display_unit"):
+                self.state.x_display_unit = x_units if len(x_units) else None
+                self.state.y_display_unit = y_units if len(y_units) else None
+            self.set_plot_axes()
 
         self._plot_uncertainties()
 
@@ -363,7 +405,9 @@ class SpecvizProfileView(JdavizViewerMixin, BqplotProfileView):
         # that new data entries (from model fitting or gaussian smooth, etc) will only be spectra
         # and all subsets affected will be spectral
         for layer in self.state.layers:
-            if "Subset" in layer.layer.label and layer.layer.data.label == data.label:
+            if (isinstance(layer.layer, GroupedSubset)
+                    and get_subset_type(layer.layer) == 'spectral'
+                    and layer.layer.data.label == data.label):
                 layer.linewidth = 3
 
         return result
@@ -433,9 +477,34 @@ class SpecvizProfileView(JdavizViewerMixin, BqplotProfileView):
             if "uncertainty" in comps:  # noqa
                 error = np.array(lyr['uncertainty'].data)
 
-                data_obj = lyr.data.get_object()
-                data_x = data_obj.spectral_axis.value
-                data_y = data_obj.flux.value
+                # ensure that the uncertainties are represented as stddev:
+                uncertainty_type_str = lyr.meta.get('uncertainty_type', 'stddev')
+                uncert_cls = uncertainty_str_to_cls_mapping[uncertainty_type_str]
+                error = uncert_cls(error).represent_as(StdDevUncertainty).array
+
+                # Then we assume that last axis is always wavelength.
+                # This may need adjustment after the following
+                # specutils PR is merged: https://github.com/astropy/specutils/pull/1033
+                spectral_axis = -1
+                data_obj = lyr.data.get_object(cls=Spectrum1D, statistic=None)
+
+                if isinstance(lyr.data.coords, SpectralCoordinates):
+                    spectral_wcs = lyr.data.coords
+                    data_x = spectral_wcs.pixel_to_world_values(
+                        np.arange(lyr.data.shape[spectral_axis])
+                    )
+                    if isinstance(data_x, tuple):
+                        data_x = data_x[0]
+                else:
+                    if hasattr(lyr.data.coords, 'spectral_wcs'):
+                        spectral_wcs = lyr.data.coords.spectral_wcs
+                    elif hasattr(lyr.data.coords, 'spectral'):
+                        spectral_wcs = lyr.data.coords.spectral
+                    data_x = spectral_wcs.pixel_to_world(
+                        np.arange(lyr.data.shape[spectral_axis])
+                    )
+
+                data_y = data_obj.data
 
                 # The shaded band around the spectrum trace is bounded by
                 # two lines, above and below the spectrum trace itself.
@@ -476,25 +545,36 @@ class SpecvizProfileView(JdavizViewerMixin, BqplotProfileView):
                 self.figure.marks = list(self.figure.marks) + [error_line_mark]
 
     def set_plot_axes(self):
-        # Get data to be used for axes labels
-        data = self.data()[0]
-
         # Set axes labels for the spectrum viewer
-        spectral_axis_unit_type = str(data.spectral_axis.unit.physical_type).title()
-        # flux_unit_type = data.flux.unit.physical_type.title()
         flux_unit_type = "Flux density"
-
-        if data.spectral_axis.unit.is_equivalent(u.m):
+        x_disp_unit = self.state.x_display_unit
+        x_unit = u.Unit(x_disp_unit) if x_disp_unit else u.dimensionless_unscaled
+        if x_unit.is_equivalent(u.m):
             spectral_axis_unit_type = "Wavelength"
-        elif data.spectral_axis.unit.is_equivalent(u.pixel):
-            spectral_axis_unit_type = "pixel"
+        elif x_unit.is_equivalent(u.Hz):
+            spectral_axis_unit_type = "Frequency"
+        elif x_unit.is_equivalent(u.pixel):
+            spectral_axis_unit_type = "Pixel"
+        else:
+            spectral_axis_unit_type = str(x_unit.physical_type).title()
 
-        label_0 = f"{spectral_axis_unit_type} [{data.spectral_axis.unit.to_string()}]"
-        self.figure.axes[0].label = label_0
-        self.figure.axes[1].label = f"{flux_unit_type} [{data.flux.unit.to_string()}]"
+        with self.figure.hold_sync():
+            self.figure.axes[0].label = f"{spectral_axis_unit_type} [{self.state.x_display_unit}]"
+            self.figure.axes[1].label = f"{flux_unit_type} [{self.state.y_display_unit}]"
 
-        # Make it so y axis label is not covering tick numbers.
-        self.figure.axes[1].label_offset = "-50"
+            # Make it so axis labels are not covering tick numbers.
+            self.figure.fig_margin["left"] = 95
+            self.figure.fig_margin["bottom"] = 60
+            self.figure.send_state('fig_margin')  # Force update
+            self.figure.axes[0].label_offset = "40"
+            self.figure.axes[1].label_offset = "-70"
+            # NOTE: with tick_style changed below, the default responsive ticks in bqplot result
+            # in overlapping tick labels.  For now we'll hardcode at 8, but this could be removed
+            # (default to None) if/when bqplot auto ticks react to styling options.
+            self.figure.axes[1].num_ticks = 8
 
-        # Set Y-axis to scientific notation
-        self.figure.axes[1].tick_format = '0.1e'
+            # Set Y-axis to scientific notation
+            self.figure.axes[1].tick_format = '0.1e'
+
+            for i in (0, 1):
+                self.figure.axes[i].tick_style = {'font-size': 15, 'font-weight': 600}

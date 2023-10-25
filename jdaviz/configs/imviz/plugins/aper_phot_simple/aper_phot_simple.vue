@@ -1,7 +1,7 @@
 <template>
   <j-tray-plugin
     description='Perform aperture photometry for a single region.'
-    :link="'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#simple-aperture-photometry'"
+    :link="docs_link || 'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#simple-aperture-photometry'"
     :popout_button="popout_button">
 
     <plugin-dataset-select
@@ -18,7 +18,7 @@
         :selected.sync="subset_selected"
         :show_if_single_entry="true"
         label="Aperture"
-        hint="Select aperture region for photometry."
+        hint="Select aperture region for photometry (cannot be an annulus or composite subset)."
       />
 
       <div v-if="subset_selected">
@@ -27,37 +27,13 @@
           :selected.sync="bg_subset_selected"
           :show_if_single_entry="true"
           label="Background"
-          hint="Select subset region for background calculation."
+          hint="Select subset region for background calculation (cannot be a composite subset)."
         />
 
         <v-row v-if="subset_selected === bg_subset_selected">
           <span class="v-messages v-messages__message text--secondary" style="color: red !important">
               Background and aperture cannot be set to the same subset
           </span>
-        </v-row>
-
-        <v-row v-if="bg_subset_selected=='Annulus'">
-          <v-text-field
-            label="Annulus inner radius"
-            v-model.number="bg_annulus_inner_r"
-            type="number"
-            :rules="[() => bg_annulus_inner_r>0 || 'Must be positive.']"
-            hint="Background annulus inner radius in pixels"
-            persistent-hint
-          >
-          </v-text-field>
-        </v-row>
-
-        <v-row v-if="bg_subset_selected=='Annulus'">
-          <v-text-field
-            label="Annulus width"
-            v-model.number="bg_annulus_width"
-            type="number"
-            :rules="[() => bg_annulus_width>0 || 'Must be positive.']"
-            hint="Background annulus width in pixels (inner radius + width = outer radius)"
-            persistent-hint
-          >
-          </v-text-field>
         </v-row>
 
         <v-row>
@@ -146,10 +122,7 @@
     </v-row>
 
     <v-row v-if="plot_available">
-      <!-- NOTE: the internal bqplot widget defaults to 480 pixels, so if choosing something else,
-           we will likely need to override that with custom CSS rules in order to avoid the initial
-           rendering of the plot from overlapping with content below -->
-      <jupyter-widget :widget="radial_plot" style="width: 100%; height: 480px" />
+      <jupyter-widget :widget="plot_widget"/> 
     </v-row>
 
     <div v-if="plot_available && fit_radial_profile && current_plot_type != 'Curve of Growth'">

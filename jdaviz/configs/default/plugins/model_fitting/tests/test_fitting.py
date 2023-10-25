@@ -5,8 +5,9 @@ import pytest
 from astropy import units as u
 from astropy.io import fits
 from astropy.io.registry.base import IORegistryError
-from astropy.modeling import models, parameters as params
+from astropy.modeling import models
 from astropy.nddata import StdDevUncertainty
+from astropy.tests.helper import assert_quantity_allclose
 from astropy.wcs import WCS
 from numpy.testing import assert_allclose, assert_array_equal
 from specutils.spectra import Spectrum1D
@@ -75,6 +76,30 @@ def test_model_ids(cubeviz_helper, spectral_cube_wcs):
             match="invalid model component label 'invalid-string'"):
         plugin.comp_label = 'invalid-string'
         plugin.vue_add_model({})
+
+
+@pytest.mark.filterwarnings(r"ignore:Model is linear in parameters.*")
+def test_parameter_retrieval(cubeviz_helper, spectral_cube_wcs):
+    flux = np.ones((3, 4, 5))
+    flux[2, 2, :] = [1, 2, 3, 4, 5]
+    cubeviz_helper.load_data(Spectrum1D(flux=flux * u.nJy, wcs=spectral_cube_wcs),
+                             data_label='test')
+    plugin = cubeviz_helper.plugins["Model Fitting"]
+    plugin.create_model_component("Linear1D", "L")
+    plugin.cube_fit = True
+    plugin.calculate_fit()
+
+    params = cubeviz_helper.get_model_parameters()
+    slope_res = np.zeros((4, 3))
+    slope_res[2, 2] = 1.0
+    slope_res = slope_res * u.nJy / u.Hz
+    intercept_res = np.ones((4, 3))
+    intercept_res[2, 2] = 0
+    intercept_res = intercept_res * u.nJy
+    assert_quantity_allclose(params['cube-fit model']['slope'], slope_res,
+                             atol=1e-10 * u.nJy / u.Hz)
+    assert_quantity_allclose(params['cube-fit model']['intercept'], intercept_res,
+                             atol=1e-10 * u.nJy)
 
 
 @pytest.mark.parametrize('unc', ('zeros', None))
@@ -182,22 +207,22 @@ def test_cube_fitting_backend(cubeviz_helper, unc, tmp_path):
             spectrum, model_list, expression, n_cpu=n_cpu)
 
     # Check that parameter results are formatted as expected.
-    assert type(fitted_parameters) == list
+    assert isinstance(fitted_parameters, list)
     assert len(fitted_parameters) == IMAGE_SIZE_X * IMAGE_SIZE_Y
 
     for m in fitted_parameters:
         if m['x'] == 3 and m['y'] == 2:
             fitted_model = m['model']
 
-    assert type(fitted_model[0].amplitude.value) == np.float64
+    assert isinstance(fitted_model[0].amplitude.value, np.float64)
     assert fitted_model[0].amplitude.unit == u.Jy
 
-    assert type(fitted_model[0] == params.Parameter)
-    assert type(fitted_model[0].mean.value) == np.float64
+    assert isinstance(fitted_model[0], models.Gaussian1D)
+    assert isinstance(fitted_model[0].mean.value, np.float64)
     assert fitted_model[0].mean.unit == u.um
 
     # Check that spectrum result is formatted as expected.
-    assert type(fitted_spectrum) == Spectrum1D
+    assert isinstance(fitted_spectrum, Spectrum1D)
     assert len(fitted_spectrum.shape) == 3
     assert fitted_spectrum.shape == (IMAGE_SIZE_X, IMAGE_SIZE_Y, SPECTRUM_SIZE)
     assert fitted_spectrum.flux.unit == u.Jy
@@ -263,3 +288,95 @@ def test_cube_fitting_backend(cubeviz_helper, unc, tmp_path):
     data_mask = cubeviz_helper.app.data_collection["fitted_cube.fits[MASK]"]
     flux_mask = data_mask.get_component("flux")
     assert_array_equal(flux_mask.data, mask)
+
+
+@pytest.mark.filterwarnings(r"ignore:Model is linear in parameters.*")
+@pytest.mark.filterwarnings(r"ignore:The fit may be unsuccessful.*")
+def test_results_table(specviz_helper, spectrum1d):
+    data_label = 'test'
+    specviz_helper.load_data(spectrum1d, data_label=data_label)
+
+    mf = specviz_helper.plugins['Model Fitting']
+    mf.create_model_component('Linear1D')
+
+    mf.add_results.label = 'linear model'
+    mf.calculate_fit(add_data=True)
+    mf_table = mf.export_table()
+    assert len(mf_table) == 1
+    assert mf_table['equation'][-1] == 'L'
+    assert mf_table.colnames == ['model', 'data_label', 'spectral_subset', 'equation',
+                                 'L:slope_0', 'L:slope_0:unit',
+                                 'L:slope_0:fixed', 'L:slope_0:std',
+                                 'L:intercept_0', 'L:intercept_0:unit',
+                                 'L:intercept_0:fixed', 'L:intercept_0:std']
+
+    mf.create_model_component('Gaussian1D')
+    mf.add_results.label = 'composite model'
+    mf.calculate_fit(add_data=True)
+    mf_table = mf.export_table()
+    assert len(mf_table) == 2
+    assert mf_table['equation'][-1] == 'L+G'
+    assert mf_table.colnames == ['model', 'data_label', 'spectral_subset', 'equation',
+                                 'L:slope_0', 'L:slope_0:unit',
+                                 'L:slope_0:fixed', 'L:slope_0:std',
+                                 'L:intercept_0', 'L:intercept_0:unit',
+                                 'L:intercept_0:fixed', 'L:intercept_0:std',
+                                 'G:amplitude_1', 'G:amplitude_1:unit',
+                                 'G:amplitude_1:fixed', 'G:amplitude_1:std',
+                                 'G:mean_1', 'G:mean_1:unit',
+                                 'G:mean_1:fixed', 'G:mean_1:std',
+                                 'G:stddev_1', 'G:stddev_1:unit',
+                                 'G:stddev_1:fixed', 'G:stddev_1:std']
+
+
+def test_equation_validation(specviz_helper, spectrum1d):
+    data_label = 'test'
+    specviz_helper.load_data(spectrum1d, data_label=data_label)
+
+    mf = specviz_helper.plugins['Model Fitting']
+    mf.create_model_component('Const1D')
+    mf.create_model_component('Linear1D')
+
+    assert mf.equation == 'C+L'
+    assert mf._obj.model_equation_invalid_msg == ''
+
+    mf.equation = 'L+'
+    assert mf._obj.model_equation_invalid_msg == 'incomplete equation.'
+
+    mf.equation = 'L+C'
+    assert mf._obj.model_equation_invalid_msg == ''
+
+    mf.equation = 'L+CC'
+    assert mf._obj.model_equation_invalid_msg == 'CC is not an existing model component.'
+
+    mf.equation = 'L+CC+DD'
+    assert mf._obj.model_equation_invalid_msg == 'CC, DD are not existing model components.'
+
+    mf.equation = ''
+    assert mf._obj.model_equation_invalid_msg == 'model equation is required.'
+
+
+@pytest.mark.filterwarnings(r"ignore:Model is linear in parameters.*")
+@pytest.mark.filterwarnings(r"ignore:The fit may be unsuccessful.*")
+def test_incompatible_units(specviz_helper, spectrum1d):
+    data_label = 'test'
+    specviz_helper.load_data(spectrum1d, data_label=data_label)
+
+    mf = specviz_helper.plugins['Model Fitting']
+    mf.create_model_component('Linear1D')
+
+    mf.add_results.label = 'model native units'
+    mf.calculate_fit(add_data=True)
+
+    uc = specviz_helper.plugins['Unit Conversion']
+    assert uc.spectral_unit.selected == "Angstrom"
+    uc.spectral_unit = u.Hz
+
+    assert 'L is currently disabled' in mf._obj.model_equation_invalid_msg
+    mf.add_results.label = 'frequency units'
+    with pytest.raises(ValueError, match=r"model equation is invalid.*"):
+        mf.calculate_fit(add_data=True)
+
+    mf.reestimate_model_parameters()
+    assert mf._obj.model_equation_invalid_msg == ''
+    mf.calculate_fit(add_data=True)

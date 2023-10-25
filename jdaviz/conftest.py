@@ -14,6 +14,12 @@ from astropy.wcs import WCS
 from specutils import Spectrum1D, SpectrumCollection, SpectrumList
 
 from jdaviz import __version__, Cubeviz, Imviz, Mosviz, Specviz, Specviz2d
+from jdaviz.configs.imviz.tests.utils import create_wfi_image_model
+from jdaviz.configs.imviz.plugins.parsers import HAS_ROMAN_DATAMODELS
+from jdaviz.utils import NUMPY_LT_2_0
+
+if not NUMPY_LT_2_0:
+    np.set_printoptions(legacy="1.25")
 
 SPECTRUM_SIZE = 10  # length of spectrum
 
@@ -179,21 +185,32 @@ def multi_order_spectrum_list(spectrum1d, spectral_orders=10):
     return SpectrumList(sc)
 
 
-def _create_spectrum1d_cube_with_fluxunit(fluxunit=u.Jy, shape=(2, 2, 4)):
-
+def _create_spectrum1d_cube_with_fluxunit(fluxunit=u.Jy, shape=(2, 2, 4), with_uncerts=False):
+    # nz=2 nx=2 ny=4
     flux = np.arange(np.prod(shape)).reshape(shape) * fluxunit
     wcs_dict = {"CTYPE1": "RA---TAN", "CTYPE2": "DEC--TAN", "CTYPE3": "WAVE-LOG",
                 "CRVAL1": 205, "CRVAL2": 27, "CRVAL3": 4.622e-7,
                 "CDELT1": -0.0001, "CDELT2": 0.0001, "CDELT3": 8e-11,
                 "CRPIX1": 0, "CRPIX2": 0, "CRPIX3": 0}
     w = WCS(wcs_dict)
+    if with_uncerts:
+        uncert = StdDevUncertainty(np.abs(np.random.normal(flux) * u.Jy))
 
-    return Spectrum1D(flux=flux, wcs=w)
+        return Spectrum1D(flux=flux,
+                          uncertainty=uncert,
+                          wcs=w)
+    else:
+        return Spectrum1D(flux=flux, wcs=w)
 
 
 @pytest.fixture
 def spectrum1d_cube():
     return _create_spectrum1d_cube_with_fluxunit(fluxunit=u.Jy)
+
+
+@pytest.fixture
+def spectrum1d_cube_with_uncerts():
+    return _create_spectrum1d_cube_with_fluxunit(fluxunit=u.Jy, with_uncerts=True)
 
 
 @pytest.fixture
@@ -207,7 +224,7 @@ def spectrum1d_cube_custom_fluxunit():
 
 
 @pytest.fixture
-def mos_spectrum1d():
+def mos_spectrum1d(mos_spectrum2d):
     '''
     A specially defined Spectrum1d that matches the corresponding spectrum2d below.
 
@@ -217,7 +234,7 @@ def mos_spectrum1d():
 
     Unless linking the two is required, try to use the global spectrum1d fixture.
     '''
-    spec_axis = np.linspace(6000, 8000, 1024) * u.AA
+    spec_axis = mos_spectrum2d.spectral_axis
     np.random.seed(42)
     flux = (np.random.randn(len(spec_axis.value)) +
             10*np.exp(-0.001*(spec_axis.value-6563)**2) +
@@ -279,6 +296,12 @@ def mos_image():
     return CCDData(data, wcs=wcs, unit='Jy', meta=header)
 
 
+@pytest.fixture
+def roman_imagemodel():
+    if HAS_ROMAN_DATAMODELS:
+        return create_wfi_image_model((20, 10))
+
+
 try:
     from pytest_astropy_header.display import PYTEST_HEADER_MODULES, TESTED_VERSIONS
 except ImportError:
@@ -310,5 +333,6 @@ def pytest_configure(config):
     PYTEST_HEADER_MODULES['gwcs'] = 'gwcs'
     PYTEST_HEADER_MODULES['asdf'] = 'asdf'
     PYTEST_HEADER_MODULES['stdatamodels'] = 'stdatamodels'
+    PYTEST_HEADER_MODULES['roman_datamodels'] = 'roman_datamodels'
 
     TESTED_VERSIONS['jdaviz'] = __version__

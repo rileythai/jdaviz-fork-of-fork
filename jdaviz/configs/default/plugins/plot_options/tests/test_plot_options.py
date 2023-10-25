@@ -1,4 +1,6 @@
 import pytest
+from numpy import allclose
+from numpy.testing import assert_allclose
 
 
 @pytest.mark.filterwarnings('ignore')
@@ -18,6 +20,11 @@ def test_multiselect(cubeviz_helper, spectrum1d_cube):
     assert po.layer.multiselect is True
 
     po.viewer.selected = ['flux-viewer', 'uncert-viewer']
+    # any internal call to reset the defaults (due to a change in the choices by adding or removing
+    # a viewer, etc) should not reset the selection
+    po.viewer._apply_default_selection(skip_if_current_valid=True)
+    assert po.viewer.selected == ['flux-viewer', 'uncert-viewer']
+
     # from API could call po.axes_visible.value = False, but we'll also test the vue-level wrapper
     po.vue_set_value({'name': 'axes_visible_value', 'value': False})
     assert po.axes_visible.value is False
@@ -55,6 +62,59 @@ def test_multiselect(cubeviz_helper, spectrum1d_cube):
     po.viewer.selected = 'spectrum-viewer'
     assert po.axes_visible.sync['in_subscribed_states'] is False
     assert len(po.axes_visible.linked_states) == 0
+
+
+@pytest.mark.filterwarnings('ignore')
+def test_stretch_histogram(cubeviz_helper, spectrum1d_cube_with_uncerts):
+    cubeviz_helper.load_data(spectrum1d_cube_with_uncerts)
+    po = cubeviz_helper.app.get_tray_item_from_name('g-plot-options')
+    po.plugin_opened = True
+
+    assert po.stretch_histogram is not None
+
+    hist_mark = po.stretch_histogram.marks['histogram']
+    flux_cube_sample = hist_mark.sample
+
+    # changing viewer should change results
+    po.viewer.selected = 'uncert-viewer'
+    assert not allclose(hist_mark.sample, flux_cube_sample)
+
+    po.viewer.selected = 'flux-viewer'
+    assert_allclose(hist_mark.sample, flux_cube_sample)
+
+    # change viewer limits
+    fv = cubeviz_helper.app.get_viewer('flux-viewer')
+    fv.state.x_max = 0.5 * fv.state.x_max
+    # viewer limits should not be affected by default
+    assert_allclose(hist_mark.sample, flux_cube_sample)
+
+    # set to listen to viewer limits, the length of the samples will change
+    po.stretch_hist_zoom_limits = True
+    assert len(hist_mark.sample) != len(flux_cube_sample)
+
+    po.stretch_vmin.value = 0.5
+    po.stretch_vmax.value = 1
+
+    assert po.stretch_histogram.marks['vmin'].x[0] == po.stretch_vmin.value
+    assert po.stretch_histogram.marks['vmax'].x[0] == po.stretch_vmax.value
+
+    assert hist_mark.bins == 25
+    po.stretch_hist_nbins = 20
+    assert hist_mark.bins == 20
+
+    po.set_histogram_x_limits(x_min=0.25, x_max=2)
+    assert po.stretch_histogram.figure.axes[0].scale.min == 0.25
+    assert po.stretch_histogram.figure.axes[0].scale.max == 2
+
+    po.set_histogram_y_limits(y_min=1, y_max=2)
+    assert po.stretch_histogram.figure.axes[1].scale.min == 1
+    assert po.stretch_histogram.figure.axes[1].scale.max == 2
+
+    po.stretch_vmin.value = hist_mark.min - 1
+    po.stretch_vmax.value = hist_mark.max + 1
+
+    assert po.stretch_histogram.marks['vmin'].x[0] == po.stretch_vmin.value
+    assert po.stretch_histogram.marks['vmax'].x[0] == po.stretch_vmax.value
 
 
 @pytest.mark.filterwarnings('ignore')

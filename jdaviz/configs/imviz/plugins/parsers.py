@@ -1,10 +1,13 @@
 import os
 
+import asdf
 import numpy as np
 from astropy import units as u
 from astropy.io import fits
 from astropy.nddata import NDData
 from astropy.wcs import WCS
+from astropy.utils.data import cache_contents
+
 from glue.core.data import Component, Data
 from gwcs.wcs import WCS as GWCS
 from stdatamodels import asdf_in_fits
@@ -12,6 +15,13 @@ from stdatamodels import asdf_in_fits
 from jdaviz.core.registries import data_parser_registry
 from jdaviz.core.events import SnackbarMessage
 from jdaviz.utils import standardize_metadata, PRIHDR_KEY
+
+try:
+    from roman_datamodels import datamodels as rdd
+except ImportError:
+    HAS_ROMAN_DATAMODELS = False
+else:
+    HAS_ROMAN_DATAMODELS = True
 
 __all__ = ['parse_data']
 
@@ -41,7 +51,21 @@ def parse_data(app, file_obj, ext=None, data_label=None):
     if isinstance(file_obj, str):
         if data_label is None:
             data_label = os.path.splitext(os.path.basename(file_obj))[0]
-        if file_obj.lower().endswith(('.jpg', '.jpeg', '.png')):
+
+        # If file_obj is a path to a cached file from
+        # astropy.utils.data.download_file, the path has no file extension.
+        # Here we check if the file is in the download cache, and if it is,
+        # we look up the file extension from the source URL:
+        if file_obj.endswith('contents'):
+            path_to_url_mapping = {v: k for k, v in cache_contents().items() if file_obj}
+            source_url = path_to_url_mapping[file_obj]
+            # file_obj_lower is only used for checking extensions,
+            # file_obj is passed for parsing and is not modified here:
+            file_obj_lower = source_url.split('/')[-1].lower()
+        else:
+            file_obj_lower = file_obj.lower()
+
+        if file_obj_lower.endswith(('.jpg', '.jpeg', '.png')):
             from skimage.io import imread
             from skimage.color import rgb2gray, rgba2rgb
             im = imread(file_obj)
@@ -51,6 +75,21 @@ def parse_data(app, file_obj, ext=None, data_label=None):
                 pf = rgb2gray(im)
             pf = pf[::-1, :]  # Flip it
             _parse_image(app, pf, data_label, ext=ext)
+
+        elif file_obj_lower.endswith('.asdf'):
+            try:
+                if HAS_ROMAN_DATAMODELS:
+                    with rdd.open(file_obj) as pf:
+                        _parse_image(app, pf, data_label, ext=ext)
+            except TypeError:
+                # if roman_datamodels cannot parse the file, load it with asdf:
+                with asdf.open(file_obj) as af:
+                    _parse_image(app, af, data_label, ext=ext)
+
+        elif file_obj_lower.endswith('.reg'):
+            # This will load DS9 regions as Subset but only if there is already data.
+            app._jdaviz_helper.load_regions_from_file(file_obj)
+
         else:  # Assume FITS
             with fits.open(file_obj) as pf:
                 _parse_image(app, pf, data_label, ext=ext)
@@ -62,6 +101,7 @@ def get_image_data_iterator(app, file_obj, data_label, ext=None):
     """This function is for internal use, so other viz can also extract image data
     like Imviz does.
     """
+
     if isinstance(file_obj, fits.HDUList):
         if 'ASDF' in file_obj:  # JWST ASDF-in-FITS
             # Load all extensions
@@ -110,6 +150,14 @@ def get_image_data_iterator(app, file_obj, data_label, ext=None):
 
     elif isinstance(file_obj, np.ndarray):
         data_iter = _ndarray_to_glue_data(file_obj, data_label)
+
+    # load Roman 2D datamodels:
+    elif HAS_ROMAN_DATAMODELS and isinstance(file_obj, rdd.DataModel):
+        data_iter = _roman_2d_to_glue_data(file_obj, data_label, ext=ext)
+
+    # load ASDF files that may not validate as Roman datamodels:
+    elif isinstance(file_obj, asdf.AsdfFile):
+        data_iter = _roman_asdf_2d_to_glue_data(file_obj, data_label, ext=ext)
 
     else:
         raise NotImplementedError(f'Imviz does not support {file_obj}')
@@ -264,7 +312,66 @@ def _jwst2data(file_obj, ext, data_label):
     return data, new_data_label
 
 
-# ---- Functions that handle input from non-JWST FITS files -----
+# ---- Functions that handle input from Roman ASDF files -----
+
+def _roman_2d_to_glue_data(file_obj, data_label, ext=None):
+
+    if ext == '*' or ext is None:
+        # NOTE: Update as needed. Should cover all the image extensions available.
+        ext_list = ('data', 'dq', 'err', 'var_poisson', 'var_rnoise')
+    elif isinstance(ext, (list, tuple)):
+        ext_list = ext
+    else:
+        ext_list = (ext, )
+
+    meta = getattr(file_obj, 'meta', {})
+    coords = getattr(meta, 'wcs', None)
+
+    for cur_ext in ext_list:
+        comp_label = cur_ext.upper()
+        new_data_label = f'{data_label}[{comp_label}]'
+        data = Data(coords=coords, label=new_data_label)
+
+        # This could be a quantity or a ndarray:
+        ext_values = getattr(file_obj, cur_ext)
+        bunit = getattr(ext_values, 'unit', '')
+        component = Component.autotyped(np.array(ext_values), units=bunit)
+        data.add_component(component=component, label=comp_label)
+        data.meta.update(standardize_metadata(dict(meta)))
+
+        yield data, new_data_label
+
+
+def _roman_asdf_2d_to_glue_data(file_obj, data_label, ext=None):
+    if ext == '*' or ext is None:
+        # NOTE: Update as needed. Should cover all the image extensions available.
+        ext_list = ('data', 'dq', 'err', 'var_poisson', 'var_rnoise')
+    elif isinstance(ext, (list, tuple)):
+        ext_list = ext
+    else:
+        ext_list = (ext, )
+
+    roman = file_obj.tree.get('roman')
+    meta = roman.get('meta', {})
+    coords = meta.get('wcs', None)
+
+    for cur_ext in ext_list:
+        if cur_ext in roman:
+            comp_label = cur_ext.upper()
+            new_data_label = f'{data_label}[{comp_label}]'
+            data = Data(coords=coords, label=new_data_label)
+
+            # This could be a quantity or a ndarray:
+            ext_values = roman.get(cur_ext)
+            bunit = getattr(ext_values, 'unit', '')
+            component = Component(np.array(ext_values), units=bunit)
+            data.add_component(component=component, label=comp_label)
+            data.meta.update(standardize_metadata(dict(meta)))
+
+            yield data, new_data_label
+
+
+# ---- Functions that handle input from non-JWST, non-Roman FITS files -----
 
 def _hdu_to_glue_data(hdu, data_label, hdulist=None):
     data, data_label = _hdu2data(hdu, data_label, hdulist)

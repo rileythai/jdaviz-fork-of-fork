@@ -1,11 +1,14 @@
 import pytest
 import numpy as np
 from astropy import units as u
+from astropy.io import fits
 from astropy.tests.helper import assert_quantity_allclose
-from glue.core.edit_subset_mode import ReplaceMode
+from astropy.utils.data import get_pkg_data_filename
 from numpy.testing import assert_allclose, assert_array_equal
 from photutils.aperture import (ApertureStats, CircularAperture, EllipticalAperture,
                                 RectangularAperture, EllipticalAnnulus)
+from regions import (CircleAnnulusPixelRegion, CirclePixelRegion, EllipsePixelRegion,
+                     RectanglePixelRegion, PixCoord)
 
 from jdaviz.configs.imviz.plugins.aper_phot_simple.aper_phot_simple import (
     _curve_of_growth, _radial_profile)
@@ -15,7 +18,7 @@ from jdaviz.configs.imviz.tests.utils import BaseImviz_WCS_WCS, BaseImviz_WCS_No
 class TestSimpleAperPhot(BaseImviz_WCS_WCS):
     def test_plugin_wcs_dithered(self):
         self.imviz.link_data(link_type='wcs')  # They are dithered by 1 pixel on X
-        self.imviz._apply_interactive_region('bqplot:circle', (0, 0), (9, 9))  # Draw a circle
+        self.imviz._apply_interactive_region('bqplot:truecircle', (0, 0), (9, 9))  # Draw a circle
 
         phot_plugin = self.imviz.app.get_tray_item_from_name('imviz-aper-phot-simple')
 
@@ -52,7 +55,7 @@ class TestSimpleAperPhot(BaseImviz_WCS_WCS):
         phot_plugin.current_plot_type = 'Radial Profile (Raw)'
         assert phot_plugin._selected_data is not None
         assert phot_plugin._selected_subset is not None
-        assert phot_plugin.bg_subset.labels == ['Manual', 'Annulus', 'Subset 1']
+        assert phot_plugin.bg_subset.labels == ['Manual', 'Subset 1']
         assert_allclose(phot_plugin.background_value, 0)
         assert_allclose(phot_plugin.counts_factor, 0)
         assert_allclose(phot_plugin.pixel_area, 0)
@@ -61,7 +64,7 @@ class TestSimpleAperPhot(BaseImviz_WCS_WCS):
         tbl = self.imviz.get_aperture_photometry_results()
         assert len(tbl) == 2
         assert phot_plugin.plot_available
-        assert phot_plugin.radial_plot != ''  # Does not check content
+        assert len(phot_plugin.plot.marks['scatter'].x) > 0
 
         # Check photometry results.
         assert tbl.colnames == [
@@ -159,22 +162,63 @@ class TestSimpleAperPhot(BaseImviz_WCS_WCS):
         phot_plugin.dataset_selected = 'twos'
         assert_allclose(phot_plugin.background_value, 2)  # Recalculate based on new Data
 
-        # Check rectangle annulus math
-        phot_plugin.bg_subset_selected = 'Annulus'
-        phot_plugin.subset_selected = 'Subset 3'
-        assert_allclose(phot_plugin.bg_annulus_inner_r, 6.363961030678928)  # half-width = 4.5
-        assert_allclose(phot_plugin.bg_annulus_width, 10)
-
         # Curve of growth
         phot_plugin.current_plot_type = 'Curve of Growth'
         phot_plugin.vue_do_aper_phot()
-        assert phot_plugin._fig.title == 'Curve of growth from aperture center'
+        assert phot_plugin.plot.figure.title == 'Curve of growth from aperture center'
+
+    def test_batch_unpack(self):
+        phot_plugin = self.imviz.app.get_tray_item_from_name('imviz-aper-phot-simple')
+
+        # NOTE: these input values are not currently validated, so it does not matter that the
+        # datasets and subsets do not exist with these names (if that changes, this test will
+        # need to be udpated accordingly)
+        unpacked = phot_plugin.unpack_batch_options(dataset=['image1', 'image2'],
+                                                    subset=['Subset 1', 'Subset 2'],
+                                                    bg_subset=['Subset 3'],
+                                                    flux_scaling=3)
+        assert unpacked == [{'subset': 'Subset 1',
+                             'dataset': 'image1',
+                             'bg_subset': 'Subset 3',
+                             'flux_scaling': 3},
+                            {'subset': 'Subset 2',
+                             'dataset': 'image1',
+                             'bg_subset': 'Subset 3',
+                             'flux_scaling': 3},
+                            {'subset': 'Subset 1',
+                             'dataset': 'image2',
+                             'bg_subset': 'Subset 3',
+                             'flux_scaling': 3},
+                            {'subset': 'Subset 2',
+                             'dataset': 'image2',
+                             'bg_subset': 'Subset 3',
+                             'flux_scaling': 3}]
+
+    def test_batch_phot(self):
+        self.imviz.link_data(link_type='wcs')  # They are dithered by 1 pixel on X
+        self.imviz._apply_interactive_region('bqplot:truecircle', (0, 0), (9, 9))  # Draw a circle
+
+        phot_plugin = self.imviz.app.get_tray_item_from_name('imviz-aper-phot-simple')
+        assert phot_plugin.dataset.choices == ['has_wcs_1[SCI,1]', 'has_wcs_2[SCI,1]']
+        assert phot_plugin.subset.choices == ['Subset 1']
+
+        phot_plugin.batch_aper_phot([{'dataset': 'has_wcs_1[SCI,1]', 'subset': 'Subset 1'},
+                                     {'dataset': 'has_wcs_2[SCI,1]'}])
+
+        assert len(phot_plugin.table) == 2
+
+        with pytest.raises(RuntimeError):
+            phot_plugin.batch_aper_phot([{'dataset': 'has_wcs_1[SCI,1]', 'subset': 'DNE'},
+                                         {'dataset': 'has_wcs_2[SCI,1]', 'subset': 'Subset 1'}])
+
+        # second entry above should have been successful, resulting in one addition to the results
+        assert len(phot_plugin.table) == 3
 
 
 class TestSimpleAperPhot_NoWCS(BaseImviz_WCS_NoWCS):
     def test_plugin_no_wcs(self):
         # Most things already tested above, so not re-tested here.
-        self.imviz._apply_interactive_region('bqplot:circle', (0, 0), (9, 9))  # Draw a circle
+        self.imviz._apply_interactive_region('bqplot:truecircle', (0, 0), (9, 9))  # Draw a circle
         phot_plugin = self.imviz.app.get_tray_item_from_name('imviz-aper-phot-simple')
 
         phot_plugin.dataset_selected = 'has_wcs[SCI,1]'
@@ -190,6 +234,82 @@ class TestSimpleAperPhot_NoWCS(BaseImviz_WCS_NoWCS):
         assert_array_equal(tbl['sky_center'], None)
 
 
+class TestAdvancedAperPhot:
+    @pytest.fixture(autouse=True)
+    def setup_class(self, imviz_helper):
+        # Reference image
+        fn_1 = get_pkg_data_filename('data/gauss100_fits_wcs.fits')
+        imviz_helper.load_data(fn_1)
+        # Different pixel scale
+        imviz_helper.load_data(get_pkg_data_filename('data/gauss100_fits_wcs_block_reduced.fits'))
+        # Different pixel scale + rotated
+        imviz_helper.load_data(get_pkg_data_filename('data/gauss100_fits_wcs_block_reduced_rotated.fits'))  # noqa: E501
+
+        # Reference image again but without any WCS
+        data = fits.getdata(fn_1, ext=0)
+        imviz_helper.load_data(data, data_label='no_wcs')
+
+        # Link them by WCS
+        imviz_helper.link_data(link_type='wcs')
+
+        # Regions to be used for aperture photometry
+        regions = []
+        positions = [(145.1, 168.3), (48.3, 200.3)]
+        for x, y in positions:
+            regions.append(CirclePixelRegion(center=PixCoord(x=x, y=y), radius=5))
+        regions += [
+            EllipsePixelRegion(center=PixCoord(x=84.7, y=224.1), width=23, height=9,
+                               angle=2.356 * u.rad),
+            RectanglePixelRegion(center=PixCoord(x=229, y=152), width=17, height=7)]
+        imviz_helper.load_regions(regions)
+
+        self.imviz = imviz_helper
+        self.viewer = imviz_helper.default_viewer
+        self.phot_plugin = imviz_helper.plugins["Imviz Simple Aperture Photometry"]._obj
+
+    @pytest.mark.parametrize(('data_label', 'local_bkg'), [
+        ('gauss100_fits_wcs[PRIMARY,1]', 5.0),
+        ('gauss100_fits_wcs_block_reduced[PRIMARY,1]', 20.0),
+        ('gauss100_fits_wcs_block_reduced_rotated[PRIMARY,1]', 20.0),
+        ('no_wcs', 5.0)])
+    @pytest.mark.parametrize(('subset_label', 'expected_sum'), [
+        ('Subset 1', 738.8803424408962),
+        ('Subset 2', 857.5194857987592),
+        ('Subset 3', 472.17364321556005),
+        ('Subset 4', 837.0023608207703)])
+    def test_aperphot(self, data_label, local_bkg, subset_label, expected_sum):
+        """All data should give similar result for the same Subset."""
+        self.phot_plugin.dataset_selected = data_label
+        self.phot_plugin.subset_selected = subset_label
+        self.phot_plugin.bg_subset_selected = 'Manual'
+        self.phot_plugin.background_value = local_bkg
+        self.phot_plugin.vue_do_aper_phot()
+        tbl = self.imviz.get_aperture_photometry_results()
+
+        # Imperfect down-sampling and imperfect apertures, so 10% is good enough.
+        assert_allclose(tbl['sum'][-1], expected_sum, rtol=0.1)
+
+    @pytest.mark.parametrize(('data_label', 'fac'), [
+        ('gauss100_fits_wcs[PRIMARY,1]', 1),
+        ('gauss100_fits_wcs_block_reduced[PRIMARY,1]', 4),
+        ('gauss100_fits_wcs_block_reduced_rotated[PRIMARY,1]', 4),
+        ('no_wcs', 1)])
+    @pytest.mark.parametrize(('bg_label', 'expected_bg'), [
+        ('Subset 2', 12.269274711608887),
+        ('Subset 3', 7.935906410217285),
+        ('Subset 4', 11.120951652526855)])
+    def test_sky_background(self, data_label, fac, bg_label, expected_bg):
+        """All background (median) should give similar result for the same Subset.
+        Down-sampled data has higher factor due to flux conservation.
+        """
+        self.phot_plugin.dataset_selected = data_label
+        self.phot_plugin.subset_selected = "Subset 1"  # Does not matter
+        self.phot_plugin.bg_subset_selected = bg_label
+
+        # Imperfect down-sampling and abusing apertures, so 10% is good enough.
+        assert_allclose(float(self.phot_plugin.background_value), expected_bg * fac, rtol=0.1)
+
+
 def test_annulus_background(imviz_helper):
     from photutils.datasets import make_4gaussians_image
 
@@ -203,28 +323,41 @@ def test_annulus_background(imviz_helper):
     phot_plugin.dataset_selected = 'ones'
 
     # Mark an object of interest
-    imviz_helper._apply_interactive_region('bqplot:circle', (143, 18), (157, 32))
+    # CirclePixelRegion(center=PixCoord(x=150, y=25), radius=7)
+    imviz_helper._apply_interactive_region('bqplot:truecircle', (143, 18), (157, 32))
+
+    # Load annulus (this used to be part of the plugin but no longer)
+    annulus_1 = CircleAnnulusPixelRegion(
+        PixCoord(x=150, y=25), inner_radius=7, outer_radius=17)
+    imviz_helper.load_regions([annulus_1])
+
     phot_plugin.subset_selected = 'Subset 1'
-    phot_plugin.bg_subset_selected = 'Annulus'
+    phot_plugin.bg_subset_selected = 'Subset 2'
 
     # Check annulus for ones
-    assert_allclose(phot_plugin.bg_annulus_inner_r, 7)  # From circle
-    assert_allclose(phot_plugin.bg_annulus_width, 10)  # Default
     assert_allclose(phot_plugin.background_value, 1)
 
     # Switch data
     phot_plugin.dataset_selected = 'four_gaussians'
-    assert_allclose(phot_plugin.bg_annulus_inner_r, 7)  # Unchanged
-    assert_allclose(phot_plugin.bg_annulus_width, 10)
     assert_allclose(phot_plugin.background_value, 5.745596129482831)  # Changed
 
     # Draw ellipse on another object
+    # EllipsePixelRegion(center=PixCoord(x=20.5, y=37.5), width=41, height=15)
     imviz_helper._apply_interactive_region('bqplot:ellipse', (0, 30), (41, 45))
-    phot_plugin.subset_selected = 'Subset 2'
+
+    # Load annulus (this used to be part of the plugin but no longer)
+    annulus_2 = CircleAnnulusPixelRegion(
+        PixCoord(x=20.5, y=37.5), inner_radius=20.5, outer_radius=30.5)
+    imviz_helper.load_regions([annulus_2])
+
+    # Subset 4 (annulus) should be available for the background but not the aperture
+    assert 'Subset 4' not in phot_plugin.subset.choices
+    assert 'Subset 4' in phot_plugin.bg_subset.choices
+
+    phot_plugin.subset_selected = 'Subset 3'
+    phot_plugin.bg_subset_selected = 'Subset 4'
 
     # Check new annulus for four_gaussians
-    assert_allclose(phot_plugin.bg_annulus_inner_r, 20.5)  # From ellipse half-width
-    assert_allclose(phot_plugin.bg_annulus_width, 10)  # Unchanged
     assert_allclose(phot_plugin.background_value, 5.13918435824334)  # Changed
 
     # Switch to manual, should not change
@@ -236,29 +369,18 @@ def test_annulus_background(imviz_helper):
     assert_allclose(phot_plugin.background_value, 44.72559981461203)
 
     # Switch back to annulus, should be same as before in same mode
-    phot_plugin.bg_subset_selected = 'Annulus'
-    assert_allclose(phot_plugin.bg_annulus_inner_r, 20.5)
-    assert_allclose(phot_plugin.bg_annulus_width, 10)
+    phot_plugin.bg_subset_selected = 'Subset 4'
     assert_allclose(phot_plugin.background_value, 5.13918435824334)
 
-    # Manually change inner_r
-    phot_plugin.bg_annulus_inner_r = 40
-    assert_allclose(phot_plugin.background_value, 4.783765940615679)
-
-    # Manually change width
-    phot_plugin.bg_annulus_width = 5
-    assert_allclose(phot_plugin.background_value, 4.894003242594493)
-
-    # Move the last created Subset (ellipse) and make sure background updates
-    imviz_helper.app.session.edit_subset_mode.mode = ReplaceMode
-    imviz_helper._apply_interactive_region('bqplot:ellipse', (0, 30), (51, 55))
-    assert_allclose(phot_plugin.bg_annulus_inner_r, 40)
-    assert_allclose(phot_plugin.bg_annulus_width, 5)
-    assert_allclose(phot_plugin.background_value, 4.894003)
-
-    # Bad annulus should not crash plugin
-    phot_plugin.bg_annulus_inner_r = -1
-    assert_allclose(phot_plugin.background_value, 0)
+    # Edit the annulus and make sure background updates
+    subset_plugin = imviz_helper.plugins["Subset Tools"]._obj
+    subset_plugin.subset_selected = "Subset 4"
+    subset_plugin._set_value_in_subset_definition(0, "X Center", "value", 25.5)
+    subset_plugin._set_value_in_subset_definition(0, "Y Center", "value", 42.5)
+    subset_plugin._set_value_in_subset_definition(0, "Inner radius", "value", 40)
+    subset_plugin._set_value_in_subset_definition(0, "Outer radius", "value", 45)
+    subset_plugin.vue_update_subset()
+    assert_allclose(phot_plugin.background_value, 4.89189)
 
 
 # NOTE: Extracting the cutout for radial profile is aperture

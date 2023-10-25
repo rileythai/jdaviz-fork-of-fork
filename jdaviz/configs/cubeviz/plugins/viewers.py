@@ -1,5 +1,7 @@
 from glue.core import BaseData
-from glue.core.subset import RoiSubsetState, RangeSubsetState
+
+from glue.core.subset_group import GroupedSubset
+from bqplot import Lines
 from glue_jupyter.bqplot.image import BqplotImageView
 
 from jdaviz.core.registries import viewer_registry
@@ -7,6 +9,8 @@ from jdaviz.core.marks import SliceIndicatorMarks, ShadowSpatialSpectral
 from jdaviz.configs.cubeviz.helper import layer_is_cube_image_data
 from jdaviz.configs.default.plugins.viewers import JdavizViewerMixin
 from jdaviz.configs.specviz.plugins.viewers import SpecvizProfileView
+from jdaviz.utils import get_subset_type
+from jdaviz.core.events import AddDataMessage, RemoveDataMessage
 
 __all__ = ['CubevizImageView', 'CubevizProfileView']
 
@@ -18,9 +22,9 @@ class CubevizImageView(JdavizViewerMixin, BqplotImageView):
     # overflow to second row when opening the tray
     tools_nested = [
                     ['jdaviz:homezoom', 'jdaviz:prevzoom'],
-                    ['jdaviz:boxzoommatch', 'jdaviz:boxzoom',
-                     'jdaviz:simplepanzoommatch', 'jdaviz:panzoom'],
-                    ['bqplot:circle', 'bqplot:rectangle', 'bqplot:ellipse'],
+                    ['jdaviz:pixelboxzoommatch', 'jdaviz:boxzoom',
+                     'jdaviz:pixelpanzoommatch', 'jdaviz:panzoom'],
+                    ['bqplot:truecircle', 'bqplot:rectangle', 'bqplot:ellipse'],
                     ['jdaviz:spectrumperspaxel'],
                     ['jdaviz:sidebar_plot', 'jdaviz:sidebar_export']
                 ]
@@ -30,18 +34,23 @@ class CubevizImageView(JdavizViewerMixin, BqplotImageView):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._default_flux_viewer_reference_name = kwargs.get(
-            "flux_viewer_reference_name", "flux-viewer"
-        )
-        self._default_uncert_viewer_reference_name = kwargs.get(
-            "uncert_viewer_reference_name", "uncert-viewer"
-        )
-        self._default_spectrum_viewer_reference_name = kwargs.get(
-            "spectrum_viewer_reference_name", "spectrum-viewer"
-        )
-
         self._subscribe_to_layers_update()
         self.state.add_callback('reference_data', self._initial_x_axis)
+
+        # Hide axes by default
+        self.state.show_axes = False
+
+    @property
+    def _default_spectrum_viewer_reference_name(self):
+        return self.jdaviz_helper._default_spectrum_viewer_reference_name
+
+    @property
+    def _default_flux_viewer_reference_name(self):
+        return self.jdaviz_helper._default_flux_viewer_reference_name
+
+    @property
+    def _default_uncert_viewer_reference_name(self):
+        return self.jdaviz_helper._default_uncert_viewer_reference_name
 
     @property
     def active_image_layer(self):
@@ -90,7 +99,7 @@ class CubevizProfileView(SpecvizProfileView):
     # categories: zoom resets, zoom, pan, subset, select tools, shortcuts
     tools_nested = [
                     ['jdaviz:homezoom', 'jdaviz:prevzoom'],
-                    ['jdaviz:boxzoom', 'jdaviz:xrangezoom'],
+                    ['jdaviz:boxzoom', 'jdaviz:xrangezoom', 'jdaviz:yrangezoom'],
                     ['jdaviz:panzoom', 'jdaviz:panzoom_x', 'jdaviz:panzoom_y'],
                     ['bqplot:xrange'],
                     ['jdaviz:selectslice', 'jdaviz:selectline'],
@@ -98,29 +107,58 @@ class CubevizProfileView(SpecvizProfileView):
                 ]
 
     def __init__(self, *args, **kwargs):
-        # NOTE: super will initialize nested toolbar with
-        # default_tool_priority=['jdaviz:selectslice']
+        kwargs.setdefault('default_tool_priority', ['jdaviz:selectslice'])
         super().__init__(*args, **kwargs)
 
-        self._default_flux_viewer_reference_name = kwargs.get(
-            "flux_viewer_reference_name", "flux-viewer"
-        )
+        self.hub.subscribe(self, RemoveDataMessage,
+                           handler=self._check_if_data_removed)
+
+        # TODO: Find out why this is not working
+        # self.hub.subscribe(self, DataCollectionDeleteMessage,
+        #                    handler=self._check_if_data_removed)
+
+        self.hub.subscribe(self, AddDataMessage,
+                           handler=self._check_if_data_added)
+
+    @property
+    def _default_flux_viewer_reference_name(self):
+        return self.jdaviz_helper._default_flux_viewer_reference_name
+
+    def _check_if_data_removed(self, msg):
+        # isinstance and the data uuid check will be true for the data
+        # that is being removed
+        self.figure.marks = [m for m in self.figure.marks
+                             if not (isinstance(m, ShadowSpatialSpectral)
+                                     and m.data_uuid == msg.data.uuid)]
+
+    def _check_if_data_added(self, msg=None):
+        # When data is added, make sure that all spatial subset layers
+        # that correspond with that data are checked for intersections
+        # with spectral subset layers
+        for layer in self.state.layers:
+            if layer.layer.data.label == msg.data.label:
+                if (isinstance(layer.layer, GroupedSubset) and
+                        get_subset_type(layer.layer.subset_state) == 'spatial'):
+                    self._expected_subset_layer_default(layer)
 
     def _is_spatial_subset(self, layer):
-        # spatial subset layers will have the same data-label as the collapsed flux cube
-        ref_data_label = self.state.reference_data.label
-        return (isinstance(getattr(layer.layer, 'subset_state', None), RoiSubsetState)
-                and layer.layer.data.label == ref_data_label)
+        subset_state = getattr(layer.layer, 'subset_state', None)
+        return get_subset_type(subset_state) == 'spatial'
 
-    def _get_spatial_subset_layers(self):
+    def _get_spatial_subset_layers(self, data_label=None):
+        if data_label:
+            return [ls for ls in self.state.layers if (ls.layer.data.label == data_label and
+                                                       self._is_spatial_subset(ls))]
         return [ls for ls in self.state.layers if self._is_spatial_subset(ls)]
 
     def _is_spectral_subset(self, layer):
-        ref_data_label = self.layers[0].layer.data.label
-        return (isinstance(getattr(layer.layer, 'subset_state', None), RangeSubsetState)
-                and layer.layer.data.label == ref_data_label)
+        subset_state = getattr(layer.layer, 'subset_state', None)
+        return get_subset_type(subset_state) == 'spectral'
 
-    def _get_spectral_subset_layers(self):
+    def _get_spectral_subset_layers(self, data_label=None):
+        if data_label:
+            return [ls for ls in self.state.layers if (ls.layer.data.label == data_label and
+                                                       self._is_spectral_subset(ls))]
         return [ls for ls in self.state.layers if self._is_spectral_subset(ls)]
 
     def _get_marks_for_layers(self, layers):
@@ -137,13 +175,12 @@ class CubevizProfileView(SpecvizProfileView):
 
     def _on_subset_delete(self, msg):
         # delete any ShadowSpatialSpectral mark for which either of the spectral or spatial marks
-        # no longer exists
-        spectral_marks = self._get_marks_for_layers(self._get_spectral_subset_layers())
-        spatial_marks = self._get_marks_for_layers(self._get_spatial_subset_layers())
+        # no longer exists by matching the uuid of the msg subset to the uuid of the subsets
+        # in ShadowSpatialSpectral
+        super()._on_subset_delete(msg)
         self.figure.marks = [m for m in self.figure.marks
-                             if not (isinstance(m, ShadowSpatialSpectral) and
-                                     (m.spatial_spectrum_mark in spatial_marks or
-                                      m.spectral_subset_mark in spectral_marks))]
+                             if not (isinstance(m, ShadowSpatialSpectral)
+                                     and msg.subset.uuid in [m.spatial_uuid, m.spectral_uuid])]
 
     def _expected_subset_layer_default(self, layer_state):
         """
@@ -151,31 +188,84 @@ class CubevizProfileView(SpecvizProfileView):
         default for the linewidth depending on whether it is spatial or spectral, and handle
         creating any necessary marks for spatial-spectral subset intersections.
         """
-        super()._expected_subset_layer_default(layer_state)
+        def _marks_are_same(m, other):
+            # Check if ShadowSpatialSpectral mark already exists for particular
+            # data, spatial subset, and spectral subset combo
+            if (m.data_uuid == other.data_uuid
+                and m.spatial_uuid == other.spatial_uuid
+                    and m.spectral_uuid == other.spectral_uuid):
+                return True
+            return False
 
-        if not (self._is_spatial_subset(layer_state) or self._is_spectral_subset(layer_state)):
+        def _is_unique(m):
+            unique = True
+            for m in existing_shadows_for_data:
+                if _marks_are_same(m, new_shadow):
+                    unique = False
+                    break
+            return unique
+
+        super()._expected_subset_layer_default(layer_state)
+        subset_type = get_subset_type(layer_state.layer)
+        if subset_type is None:
             return
 
         this_mark = self._get_marks_for_layers([layer_state])[0]
-
+        # new ShadowSpatialSpectral marks to be added
         new_marks = []
-
-        if isinstance(layer_state.layer.subset_state, RoiSubsetState):
+        # ShadowSpatialSpectral marks that already exists in the viewer
+        existing_shadows_for_data = [m for m in self.figure.marks
+                                     if isinstance(m, ShadowSpatialSpectral)]
+        if subset_type == 'spatial':
             layer_state.linewidth = 1
 
             # need to add marks for every intersection between THIS spatial subset and ALL spectral
-            spectral_marks = self._get_marks_for_layers(self._get_spectral_subset_layers())
-            for spectral_mark in spectral_marks:
-                new_marks += [ShadowSpatialSpectral(this_mark, spectral_mark)]
+            # subset marks corresponding to this data
+            spectral_layers = [sub_layer for sub_layer in
+                               self._get_spectral_subset_layers(layer_state.layer.data.label)]
+            spectral_marks = self._get_marks_for_layers(spectral_layers)
+
+            for index, spectral_mark in enumerate(spectral_marks):
+                new_shadow = ShadowSpatialSpectral(spatial_spectrum_mark=this_mark,
+                                                   spectral_subset_mark=spectral_mark,
+                                                   spatial_uuid=layer_state.layer.uuid,
+                                                   spectral_uuid=spectral_layers[index].layer.uuid,
+                                                   data_uuid=layer_state.layer.data.uuid)
+                if _is_unique(new_shadow):
+                    new_marks.append(new_shadow)
+
+            # change opacity for live-collapsed spectra from spatial subsets in Cubeviz:
+            spatial_layers = [sub_layer for sub_layer in
+                              self._get_spatial_subset_layers(layer_state.layer.data.label)]
+            spatial_marks = self._get_marks_for_layers(spatial_layers)
+            for layer, mark in zip(spatial_layers, spatial_marks):
+                # update profile opacities for spatial subset:
+                if isinstance(mark, Lines):
+                    mark.set_trait(
+                        'opacities',
+                        # set the alpha for the spectrum in the profile viewer
+                        # to be 50% more opaque than the alpha for the spatial subset
+                        # in the flux-viewer
+                        [min(1.5 * layer.alpha, 1)]
+                    )
+
+        elif subset_type == 'spectral':
+            # need to add marks for every intersection between THIS spectral subset and ALL spatial
+            # subset marks corresponding to this data
+            spatial_layers = [sub_layer for sub_layer in
+                              self._get_spatial_subset_layers(layer_state.layer.data.label)]
+            spatial_marks = self._get_marks_for_layers(spatial_layers)
+            for index, spatial_mark in enumerate(spatial_marks):
+                new_shadow = ShadowSpatialSpectral(spatial_spectrum_mark=spatial_mark,
+                                                   spectral_subset_mark=this_mark,
+                                                   spatial_uuid=spatial_layers[index].layer.uuid,
+                                                   spectral_uuid=layer_state.layer.uuid,
+                                                   data_uuid=layer_state.layer.data.uuid)
+                if _is_unique(new_shadow):
+                    new_marks.append(new_shadow)
 
         else:
-            layer_state.linewidth = 3
-
-            # need to add marks for every intersection between THIS spectral subset and ALL spatial
-            spatial_marks = self._get_marks_for_layers(self._get_spatial_subset_layers())
-            for spatial_mark in spatial_marks:
-                new_marks += [ShadowSpatialSpectral(spatial_mark, this_mark)]
-
+            return
         # NOTE: += or append won't pick up on change
         self.figure.marks = self.figure.marks + new_marks
 

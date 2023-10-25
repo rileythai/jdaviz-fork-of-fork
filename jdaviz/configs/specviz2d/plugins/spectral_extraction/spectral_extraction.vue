@@ -1,7 +1,10 @@
 <template>
   <j-tray-plugin
     description="2D to 1D spectral extraction."
-    :link="'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#spectral-extraction'"
+    :link="docs_link || 'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#spectral-extraction'"
+    :uses_active_status="uses_active_status"
+    @plugin-ping="plugin_ping($event)"
+    :keep_active.sync="keep_active"
     :popout_button="popout_button">
 
     <v-row>
@@ -159,7 +162,7 @@
       </div>
 
       <v-row>
-        <v-expansion-panels popout>
+        <v-expansion-panels accordion>
           <v-expansion-panel>
             <v-expansion-panel-header v-slot="{ open }">
               <span style="padding: 6px">Export Trace</span>
@@ -273,7 +276,7 @@
       </v-row>
 
       <v-row>
-        <v-expansion-panels popout>
+        <v-expansion-panels accordion>
           <v-expansion-panel>
             <v-expansion-panel-header v-slot="{ open }">
               <span style="padding: 6px">Export Background Image</span>
@@ -297,7 +300,7 @@
         </v-expansion-panels>
       </v-row>
       <v-row>
-        <v-expansion-panels popout>
+        <v-expansion-panels accordion>
           <v-expansion-panel>
             <v-expansion-panel-header v-slot="{ open }">
               <span style="padding: 6px">Export Background Spectrum</span>
@@ -321,7 +324,7 @@
         </v-expansion-panels>
       </v-row>
       <v-row>
-        <v-expansion-panels popout>
+        <v-expansion-panels accordion>
           <v-expansion-panel>
             <v-expansion-panel-header v-slot="{ open }">
               <span style="padding: 6px">Export Background-Subtracted Image</span>

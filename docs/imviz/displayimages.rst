@@ -85,27 +85,27 @@ are saved when beginning a zoom selection or when activating a pan/zoom tool.
 Box Zoom and Linked Box Zoom
 ============================
 
-Linked Box Zoom is an Imviz-specific feature that allows the user to zoom
-images in multiple different viewers simultaneously, not unlike
+Linked Box Zoom is an Imviz-specific feature enabled only when there are multiple viewers that
+allows the user to zoom images in multiple different viewers simultaneously, not unlike
 :ref:`imviz_pan_zoom`.
 
 Single-viewer Box Zoom is also available and is used in a similar way as in
-other Jdaviz tools. To access this option, right-click on the Linked Box Zoom button
-and left-click on the second option down to select it.
+other Jdaviz tools. To access this option when there are multiple viewers, 
+right-click on the Linked Box Zoom button and left-click on the second option down to select it.
 
 .. _imviz_pan_zoom:
 
 Pan/Zoom and Linked Pan/Zoom
 ============================
 
-Linked Pan/Zoom is an Imviz-specific feature that allows the user to pan and zoom
-images in multiple different viewers simultaneously. This works by matching images
+Linked Pan/Zoom is an Imviz-specific feature enabled only when there are multiple viewers that
+allows the user to pan and zoom images in multiple different viewers simultaneously. This works by matching images
 based on the way they are linked together. Images are linked by pixels on load time,
 but you can re-link them via WCS using :ref:`imviz-link-control`.
 
 Single-viewer Pan/Zoom is also available and is used in a similar way as in
-other Jdaviz tools. To access this option, right-click on the Linked Pan/Zoom button
-and left-click on the second option down to select it.
+other Jdaviz tools. To access this option when there are multiple viewers, right-click on the
+Linked Pan/Zoom button and left-click on the second option down to select it.
 
 When in either of these modes, clicking on the image will recenter the image to the
 location under cursor.
@@ -219,8 +219,9 @@ Blinking
 
 Blinking is an Imviz-specific functionality that allows a user to quickly switch
 between viewing two or more images, as long as they are linked (see :ref:`imviz_pan_zoom` for
-more on linking behavior). This can be done by selecting the |icon-blink| icon and
-then left-clicking on the image to blink forward; right-clicking would blink backwards.
+more on linking behavior). This can be done by selecting the |icon-blink| icon (only available if
+there are more than one image loaded in the viewer) and then left-clicking on the image to blink
+forward; right-clicking would blink backwards.
 
 You can also blink forward by pressing the "b" key on your keyboard while moused over the image.
 If you press Shift + "b" ("B"), you may blink backwards.
@@ -292,7 +293,7 @@ the second image as data in the data dropdown tab, and select both images. To vi
 of the second image, go to the :guilabel:`Layer` tab, select the layer to be contour-mapped, and
 set its :guilabel:`Contour` to be on and its :guilabel:`Bitmap` to be off. The contours of
 the second image will appear superimposed on the first image. In the second figure below, we
-show the contours of an image generated using the Collapse plugin plotted over leftmost cube
+show the contours of an image generated using the Collapse plugin plotted over the leftmost cube
 viewer.  If you overplot them on a cube, the contours will remain unchanged as you scrub through
 the cube.
 
@@ -352,6 +353,18 @@ can be accessed with ``plot_options.stretch_function.choices``:
     plot_options.select_all()
     plot_options.stretch_function = 'Square Root'
 
+
+A histogram is displayed showing the distribution of pixel values, with
+vertical lines representing the ``stretch_vmin`` and ``stretch_vmax``
+values. A stretch "curve" can be plotted under the histogram to represent
+how pixel values are mapped to the colorbar. This feature can be toggled
+on from the API with:
+
+.. code-block:: python
+
+    plot_options = imviz.plugins['Plot Options']
+    plot_options.stretch_curve_visible = True
+
 Percentile
 ----------
 
@@ -398,7 +411,7 @@ To set the percentile for all the images at once:
 Colormap
 --------
 
-The spectrum of colors used to visualize data can be changed using this drop down.
+The spectrum of colors used to visualize data can be changed using this drop-down.
 
 From the API
 ^^^^^^^^^^^^

@@ -20,7 +20,7 @@ from jdaviz.configs.default.plugins.model_fitting.initializers import MODELS
 
 
 def test_default_model_labels(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d)
+    specviz_helper.load_data(spectrum1d)
     modelfit_plugin = specviz_helper.plugins['Model Fitting']
     # By default, the spectral region should be the entire spectrum
     assert modelfit_plugin._obj.spectral_subset_selected == "Entire Spectrum"
@@ -46,7 +46,7 @@ def test_default_model_labels(specviz_helper, spectrum1d):
 
 
 def test_custom_model_labels(specviz_helper, spectrum1d):
-    specviz_helper.load_spectrum(spectrum1d)
+    specviz_helper.load_data(spectrum1d)
     modelfit_plugin = specviz_helper.plugins['Model Fitting']
 
     for i, model in enumerate(MODELS):
@@ -68,7 +68,7 @@ def test_register_model_with_uncertainty_weighting(specviz_helper, spectrum1d):
     spectrum1d.uncertainty = StdDevUncertainty(spectrum1d.flux * 0.1)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        specviz_helper.load_spectrum(spectrum1d)
+        specviz_helper.load_data(spectrum1d)
     modelfit_plugin = specviz_helper.plugins['Model Fitting']
 
     # Test registering a simple linear fit
@@ -105,7 +105,7 @@ def test_register_model_uncertainty_is_none(specviz_helper, spectrum1d):
     spectrum1d.uncertainty = None
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        specviz_helper.load_spectrum(spectrum1d)
+        specviz_helper.load_data(spectrum1d)
     modelfit_plugin = specviz_helper.plugins['Model Fitting']
 
     # Test registering a simple linear fit
@@ -149,15 +149,45 @@ def test_register_cube_model(cubeviz_helper, spectrum1d_cube):
     modelfit_plugin._obj.cube_fit = True
     assert modelfit_plugin._obj.results_label_default == 'cube-fit model'
     assert modelfit_plugin._obj.results_label == test_label
-    with pytest.warns(AstropyUserWarning):
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message=r'.*Model is linear in parameters.*')
         modelfit_plugin.calculate_fit()
     assert test_label in cubeviz_helper.app.data_collection
+
+
+def test_refit_plot_options(specviz_helper, spectrum1d):
+    specviz_helper.load_data(spectrum1d)
+    modelfit_plugin = specviz_helper.plugins['Model Fitting']
+
+    modelfit_plugin.model_comp_selected = 'Const1D'
+    modelfit_plugin._obj.comp_label = "C"
+    modelfit_plugin._obj.vue_add_model({})
+
+    with pytest.warns(AstropyUserWarning):
+        modelfit_plugin.calculate_fit(add_data=True)
+
+    sv = specviz_helper.app.get_viewer('spectrum-viewer')
+    atts = {"color": "red", "linewidth": 2, "alpha": 0.8}
+    layer_state = [layer.state for layer in sv.layers if layer.layer.label == "model"][0]
+    for att in atts:
+        setattr(layer_state, att, atts[att])
+
+    # Refit using the same name, which will replace the data by default.
+    modelfit_plugin.create_model_component('Linear1D', 'L')
+
+    with pytest.warns(AstropyUserWarning):
+        modelfit_plugin.calculate_fit(add_data=True)
+
+    layer_state = [layer.state for layer in sv.layers if layer.layer.label == "model"][0]
+
+    for att in atts:
+        assert atts[att] == getattr(layer_state, att)
 
 
 def test_user_api(specviz_helper, spectrum1d):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        specviz_helper.load_spectrum(spectrum1d)
+        specviz_helper.load_data(spectrum1d)
     p = specviz_helper.plugins['Model Fitting']
 
     # even though the default label is set to C, adding Linear1D should default to its automatic
@@ -195,7 +225,7 @@ def test_user_api(specviz_helper, spectrum1d):
 def test_fit_gaussian_with_fixed_mean(specviz_helper, spectrum1d):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        specviz_helper.load_spectrum(spectrum1d)
+        specviz_helper.load_data(spectrum1d)
     modelfit_plugin = specviz_helper.plugins['Model Fitting']
 
     modelfit_plugin.create_model_component('Gaussian1D', 'G')
@@ -217,7 +247,7 @@ def test_fit_gaussian_with_fixed_mean(specviz_helper, spectrum1d):
 def test_reestimate_parameters(specviz_helper, spectrum1d):
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
-        specviz_helper.load_spectrum(spectrum1d)
+        specviz_helper.load_data(spectrum1d)
     mf = specviz_helper.plugins['Model Fitting']
 
     mf.create_model_component('Gaussian1D', 'G')
@@ -327,12 +357,12 @@ def test_subset_masks(cubeviz_helper, spectrum1d_cube_larger):
 
 def test_invalid_subset(specviz_helper, spectrum1d):
     # 6000-8000
-    specviz_helper.load_spectrum(spectrum1d, data_label="right_spectrum")
+    specviz_helper.load_data(spectrum1d, data_label="right_spectrum")
 
     # 5000-7000
     sp2 = Spectrum1D(spectral_axis=spectrum1d.spectral_axis - 1000*spectrum1d.spectral_axis.unit,
                      flux=spectrum1d.flux * 1.25)
-    specviz_helper.load_spectrum(sp2, data_label="left_spectrum")
+    specviz_helper.load_data(sp2, data_label="left_spectrum")
 
     # apply subset that overlaps on left_spectrum, but not right_spectrum
     # NOTE: using a subset that overlaps the right_spectrum (reference) results in errors when
@@ -350,7 +380,7 @@ def test_invalid_subset(specviz_helper, spectrum1d):
     plugin.spectral_subset = 'Subset 1'
     assert not plugin._obj.spectral_subset_valid
 
-    with pytest.raises(ValueError, match=r"spectral subset 'Subset 1' \(5000.0, 5888.888888888889\) is outside data range of 'right_spectrum' \(6000.0, 8000.0\)"):  # noqa
+    with pytest.raises(ValueError, match=r"spectral subset 'Subset 1' \(5000.0, 6000.0\) is outside data range of 'right_spectrum' \(6000.0, 8000.0\)"):  # noqa
         plugin.calculate_fit()
 
     plugin.dataset = 'left_spectrum'

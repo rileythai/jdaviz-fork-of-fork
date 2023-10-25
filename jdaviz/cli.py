@@ -1,5 +1,6 @@
 # Command-line interface for jdaviz
 
+import inspect
 import os
 import pathlib
 import sys
@@ -9,15 +10,19 @@ from voila.app import Voila
 from voila.configuration import VoilaConfiguration
 
 from jdaviz import __version__
-from jdaviz.app import _verbosity_levels
+from jdaviz.app import _verbosity_levels, ALL_JDAVIZ_CONFIGS
+from jdaviz import configs
 
 __all__ = ['main']
 
+CONFIGS_DIR = str(pathlib.Path(inspect.getfile(configs)).parent)
 JDAVIZ_DIR = pathlib.Path(__file__).parent.resolve()
+DEFAULT_VERBOSITY = 'warning'
+DEFAULT_HISTORY_VERBOSITY = 'info'
 
 
 def main(filepaths=None, layout='default', instrument=None, browser='default',
-         theme='light', verbosity='warning', history_verbosity='info',
+         theme='light', verbosity=DEFAULT_VERBOSITY, history_verbosity=DEFAULT_HISTORY_VERBOSITY,
          hotreload=False):
     """
     Start a Jdaviz application instance with data loaded from FILENAME.
@@ -58,7 +63,15 @@ def main(filepaths=None, layout='default', instrument=None, browser='default',
     else:
         file_list = []
 
-    with open(JDAVIZ_DIR / "jdaviz_cli.ipynb") as f:
+    if layout == '':
+        if len(file_list) <= 1:
+            notebook = "jdaviz_cli_launcher.ipynb"
+        else:
+            raise ValueError("'layout' argument is required when specifying multiple files")
+    else:
+        notebook = "jdaviz_cli.ipynb"
+
+    with open(JDAVIZ_DIR / notebook) as f:
         notebook_template = f.read()
 
     start_dir = os.path.abspath('.')
@@ -109,8 +122,7 @@ def _main(config=None):
                                      'loaded from FILENAME.')
     filepaths_nargs = '*'
     if config is None:
-        parser.add_argument('layout', choices=['cubeviz', 'specviz', 'specviz2d',
-                                               'mosviz', 'imviz'],
+        parser.add_argument('--layout', default='', choices=ALL_JDAVIZ_CONFIGS,
                             help='Configuration to use.')
     if (config == "mosviz") or ("mosviz" in sys.argv):
         filepaths_nargs = 1
@@ -144,3 +156,27 @@ def _main(config=None):
     main(filepaths=args.filepaths, layout=layout, instrument=args.instrument, browser=args.browser,
          theme=args.theme, verbosity=args.verbosity, history_verbosity=args.history_verbosity,
          hotreload=args.hotreload)
+
+
+def _specviz():
+    _main(config='specviz')
+
+
+def _specviz2d():
+    _main(config='specviz2d')
+
+
+def _imviz():
+    _main(config='imviz')
+
+
+def _cubeviz():
+    _main(config='cubeviz')
+
+
+def _mosviz():
+    _main(config='mosviz')
+
+
+if __name__ == "__main__":
+    _main()

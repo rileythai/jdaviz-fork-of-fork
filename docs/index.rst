@@ -2,8 +2,58 @@
 Jdaviz
 ######
 
-.. image:: logos/jdaviz.svg
-   :width: 400
+.. grid:: 3
+   :gutter: 1
+
+   .. grid-item-card::
+      :img-top: logos/imviz\ icon.svg
+
+      .. button-ref:: imviz/index
+         :expand:
+         :color: primary
+         :click-parent:
+
+         Jump to Imviz
+
+   .. grid-item-card::
+      :img-top: logos/specicon.svg
+
+      .. button-ref:: specviz/index
+         :expand:
+         :color: primary
+         :click-parent:
+
+         Jump to Specviz
+
+   .. grid-item-card::
+      :img-top: logos/cube.svg
+
+      .. button-ref:: cubeviz/index
+         :expand:
+         :color: primary
+         :click-parent:
+
+         Jump to Cubeviz
+
+   .. grid-item-card::
+      :img-top: logos/specviz2d\ icon.svg
+
+      .. button-ref:: specviz2d/index
+         :expand:
+         :color: primary
+         :click-parent:
+
+         Jump to Specviz2D
+
+   .. grid-item-card::
+      :img-top: logos/mos.svg
+
+      .. button-ref:: mosviz/index
+         :expand:
+         :color: primary
+         :click-parent:
+
+         Jump to Mosviz
 
 ``jdaviz`` is a package of astronomical data analysis visualization
 tools based on the Jupyter platform.  These GUI-based tools link data
@@ -24,6 +74,11 @@ spectra, typically the output of a multi-object spectrograph (e.g.,
 JWST NIRSpec), and includes viewers for 1D and 2D spectra as well as
 contextual information like on-sky views of the spectrograph slit.
 
+.. warning::
+
+   As of ``jdaviz`` version 3.5, python 3.8 is no longer supported. Please use python 3.9 or
+   greater to get the latest bug fixes and feature additions for ``jdaviz``.
+
 .. note::
 
    ``jdaviz`` is one tool that is part of STScI's larger
@@ -34,180 +89,45 @@ contextual information like on-sky views of the spectrograph slit.
    The offline version of this documentation can be downloaded from
    `Jdaviz zipped HTML downloads page <https://readthedocs.org/projects/jdaviz/downloads/>`_.
 
-.. _jdaviz_instrument_table:
+.. note::
 
-JWST Instrument Modes in Jdaviz
-===============================
+   Recordings and instructional notebooks from live Jdaviz tutorials can be found at
+   `the JWebbinar website <https://www.stsci.edu/jwst/science-execution/jwebbinars>`_
+   under the "Materials and Videos" expandable section. Scroll down to the bottom of that section
+   to find materials from the most recent session (JWebbinar 24, March 2023).
 
-This tool is designed with instrument modes from the James Webb Space Telescope (JWST) in mind, but
-the tool should be flexible enough to read in data from many astronomical telescopes.  The table below
-summarizes Jdaviz file support specific to JWST instrument modes.
-
-.. list-table:: JWST Instrument Modes in Jdaviz
-   :widths: 25 15 10 15 20
-   :header-rows: 1
-
-   * - Instrument
-     - Template Mode
-     - File Type
-     - Pipeline Level
-     - Primary Configuration
-   * - NIRSpec
-     - MOS
-     - S2D
-     - 2b,3
-     - Mosviz
-   * -
-     -
-     - X1D
-     - 2b,3
-     - Specviz
-   * -
-     - IFU
-     - S3D
-     - 2b,3
-     - Cubeviz
-   * -
-     -
-     - X1D
-     - 2b,3
-     - Specviz
-   * -
-     - FS
-     - S2D
-     - 2b,3
-     - Specviz2d
-   * -
-     -
-     - X1D
-     - 2b,3
-     - Specviz
-   * -
-     - BOTS
-     - X1DINTS
-     - --
-     - No Support
-   * - NIRISS
-     - IMAGING
-     - I2D
-     - 2b,3
-     - Imviz
-   * -
-     - WFSS
-     - X1D
-     - 2b
-     - Specviz
-   * -
-     - AMI
-     - AMINORM
-     - --
-     - No Support
-   * -
-     - SOSS
-     - X1DINTS
-     - --
-     - No Support
-   * - NIRCam
-     - Imaging
-     - I2D
-     - 2b,3
-     - Imviz
-   * -
-     - Coronagraphic Imaging
-     - I2D
-     - 2b,3
-     - Imviz
-   * -
-     - WFSS
-     - X1D
-     - 2b
-     - Specviz
-   * -
-     - Grism TSO
-     - X1DINTS
-     - --
-     - No Support
-   * - MIRI
-     - Imaging
-     - I2D
-     - 2b,3
-     - Imviz
-   * -
-     - Coronagraphic Imaging
-     - I2D
-     - 2b,3
-     - Imviz
-   * -
-     - LRS-slit
-     - S2D
-     - 2b,3
-     - Specviz2d
-   * -
-     -
-     - X1D
-     - 2b,3
-     - Specviz
-   * -
-     - LRS-slitless
-     - X1DINTS
-     - --
-     - No Support
-   * -
-     - MRS
-     - S3D
-     - 2b,3
-     - Cubeviz
-   * -
-     -
-     - X1D
-     - 2b, 3
-     - Specviz
-
-
+************
 Using Jdaviz
-============
+************
 
 .. toctree::
   :maxdepth: 2
 
-  installation.rst
-  imviz/index.rst
-  specviz/index.rst
-  cubeviz/index.rst
-  specviz2d/index.rst
-  mosviz/index.rst
-  plugin_api.rst
-  save_state.rst
-  display.rst
-  sample_notebooks.rst
+  index_using_jdaviz
 
-Reference/API
-=============
+*******************************
+JWST Instrument Modes in Jdaviz
+*******************************
+
+.. toctree::
+  :maxdepth: 2
+
+  index_jwst_modes
+
+*****************
+Development Guide
+*****************
 
 .. toctree::
    :maxdepth: 2
 
-   dev/index.rst
-   reference/api.rst
+   index_ref_api
 
-Additional documentation
-========================
+*********************
+License & Attribution
+*********************
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
-   known_bugs.rst
-
-License & Attribution
-=====================
-
-This project is Copyright (c) JDADF Developers and licensed under
-the terms of the BSD 3-Clause license.
-
-This package is based upon
-the `Astropy package template <https://github.com/astropy/package-template>`_
-which is licensed under the BSD 3-clause licence. See the
-`licenses <https://github.com/spacetelescope/jdaviz/tree/main/licenses>`_
-folder for more information.
-
-Cite ``jdaviz`` via our Zenodo record: https://doi.org/10.5281/zenodo.5513927.
+   index_citation

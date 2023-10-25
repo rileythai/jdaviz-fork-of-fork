@@ -6,6 +6,7 @@ settings:
     tray: true
     tab_headers: false
   dense_toolbar: false
+  server_is_remote: false
   context:
     notebook:
       max_height: 860px
@@ -43,7 +44,7 @@ viewer_area:
               plot: mosviz-profile-2d-viewer
               reference: spectrum-2d-viewer
             - name: Spectrum
-              plot: specviz-profile-viewer
+              plot: mosviz-profile-viewer
               reference: spectrum-viewer
       - container: row
         viewers:

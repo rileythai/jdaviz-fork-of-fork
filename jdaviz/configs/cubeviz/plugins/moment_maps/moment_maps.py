@@ -5,7 +5,7 @@ from astropy import units as u
 from astropy.nddata import CCDData
 
 from traitlets import Unicode, Bool, observe
-from specutils import Spectrum1D, manipulation, analysis
+from specutils import manipulation, analysis
 
 from jdaviz.core.custom_traitlets import IntHandleEmpty
 from jdaviz.core.events import SnackbarMessage
@@ -50,19 +50,31 @@ class MomentMap(PluginTemplateMixin, DatasetSelectMixin, SpectralSubsetSelectMix
     moment_available = Bool(False).tag(sync=True)
     overwrite_warn = Bool(False).tag(sync=True)
 
+    # export_enabled controls whether saving the moment map to a file is enabled via the UI.  This
+    # is a temporary measure to allow server-installations to disable saving server-side until
+    # saving client-side is supported
+    export_enabled = Bool(True).tag(sync=True)
+
     def __init__(self, *args, **kwargs):
-        self._default_spectrum_viewer_reference_name = kwargs.get(
-            "spectrum_viewer_reference_name", "spectrum-viewer"
-        )
-        self._default_image_viewer_reference_name = kwargs.get(
-            "image_viewer_reference_name", "image-viewer"
-        )
         super().__init__(*args, **kwargs)
 
         self.moment = None
 
         self.dataset.add_filter('is_cube')
         self.add_results.viewer.filters = ['is_image_viewer']
+
+        if self.app.state.settings.get('server_is_remote', False):
+            # when the server is remote, saving the file in python would save on the server, not
+            # on the user's machine, so export support in cubeviz should be disabled
+            self.export_enabled = False
+
+    @property
+    def _default_image_viewer_reference_name(self):
+        return self.jdaviz_helper._default_image_viewer_reference_name
+
+    @property
+    def _default_spectrum_viewer_reference_name(self):
+        return self.jdaviz_helper._default_spectrum_viewer_reference_name
 
     @property
     def user_api(self):
@@ -89,7 +101,11 @@ class MomentMap(PluginTemplateMixin, DatasetSelectMixin, SpectralSubsetSelectMix
             Whether to add the resulting data object to the app according to ``add_results``.
         """
         # Retrieve the data cube and slice out desired region, if specified
-        cube = self.dataset.get_object(cls=Spectrum1D, statistic=None)
+        if "_orig_spec" in self.dataset.selected_obj.meta:
+            cube = self.dataset.selected_obj.meta["_orig_spec"]
+        else:
+            cube = self.dataset.selected_obj
+
         spec_min, spec_max = self.spectral_subset.selected_min_max(cube)
         slab = manipulation.spectral_slab(cube, spec_min, spec_max)
 
@@ -136,21 +152,34 @@ class MomentMap(PluginTemplateMixin, DatasetSelectMixin, SpectralSubsetSelectMix
     def _write_moment_to_fits(self, overwrite=False, *args):
         if self.moment is None or not self.filename:  # pragma: no cover
             return
+        if not self.export_enabled:
+            # this should never be triggered since this is intended for UI-disabling and the
+            # UI section is hidden, but would prevent any JS-hacking
+            raise ValueError("Writing out moment map to file is currently disabled")
 
-        path = Path(self.filename).resolve()
-        if path.exists():
+        # Make sure file does not end up in weird places in standalone mode.
+        path = os.path.dirname(self.filename)
+        if path and not os.path.exists(path):
+            raise ValueError(f"Invalid path={path}")
+        elif (not path or path.startswith("..")) and os.environ.get("JDAVIZ_START_DIR", ""):  # noqa: E501 # pragma: no cover
+            filename = Path(os.environ["JDAVIZ_START_DIR"]) / self.filename
+        else:
+            filename = Path(self.filename).resolve()
+
+        if filename.exists():
             if overwrite:
                 # Try to delete the file
-                path.unlink()
-                if path.exists():
+                filename.unlink()
+                if filename.exists():
                     # Warn the user if the file still exists
-                    raise FileExistsError(f"Unable to delete {path}. Check user permissions.")
+                    raise FileExistsError(f"Unable to delete {filename}. Check user permissions.")
             else:
                 self.overwrite_warn = True
                 return
 
-        self.moment.write(str(path))
+        filename = str(filename)
+        self.moment.write(filename)
 
         # Let the user know where we saved the file.
         self.hub.broadcast(SnackbarMessage(
-            f"Moment map saved to {os.path.abspath(self.filename)}", sender=self, color="success"))
+            f"Moment map saved to {os.path.abspath(filename)}", sender=self, color="success"))

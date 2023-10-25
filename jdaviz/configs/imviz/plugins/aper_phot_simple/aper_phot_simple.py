@@ -1,9 +1,8 @@
 import os
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 
 import astropy
-import bqplot
 import numpy as np
 from astropy import units as u
 from astropy.modeling.fitting import LevMarLSQFitter
@@ -15,23 +14,22 @@ from ipywidgets import widget_serialization
 from packaging.version import Version
 from photutils.aperture import (ApertureStats, CircularAperture, EllipticalAperture,
                                 RectangularAperture)
-from regions import (CircleAnnulusPixelRegion, CirclePixelRegion, EllipsePixelRegion,
-                     RectanglePixelRegion)
 from traitlets import Any, Bool, Integer, List, Unicode, observe
 
-from jdaviz.core.custom_traitlets import FloatHandleEmpty
 from jdaviz.core.events import SnackbarMessage, LinkUpdatedMessage
 from jdaviz.core.region_translators import regions2aperture, _get_region_from_spatial_subset
 from jdaviz.core.registries import tray_registry
 from jdaviz.core.template_mixin import (PluginTemplateMixin, DatasetSelectMixin,
-                                        SubsetSelect, TableMixin)
-from jdaviz.utils import bqplot_clear_figure, PRIHDR_KEY
+                                        SubsetSelect, TableMixin, PlotMixin)
+from jdaviz.utils import PRIHDR_KEY
 
 __all__ = ['SimpleAperturePhotometry']
 
+ASTROPY_LT_5_2 = Version(astropy.__version__) < Version('5.2')
+
 
 @tray_registry('imviz-aper-phot-simple', label="Imviz Simple Aperture Photometry")
-class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMixin):
+class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMixin, PlotMixin):
     template_file = __file__, "aper_phot_simple.vue"
     subset_items = List([]).tag(sync=True)
     subset_selected = Unicode("").tag(sync=True)
@@ -39,8 +37,6 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
     bg_subset_items = List().tag(sync=True)
     bg_subset_selected = Unicode("").tag(sync=True)
     background_value = Any(0).tag(sync=True)
-    bg_annulus_inner_r = FloatHandleEmpty(0).tag(sync=True)
-    bg_annulus_width = FloatHandleEmpty(10).tag(sync=True)
     pixel_area = Any(0).tag(sync=True)
     counts_factor = Any(0).tag(sync=True)
     flux_scaling = Any(0).tag(sync=True)
@@ -61,14 +57,14 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
                                    'subset_items',
                                    'subset_selected',
                                    default_text=None,
-                                   allowed_type='spatial')
+                                   filters=['is_spatial', 'is_not_composite', 'is_not_annulus'])
 
         self.bg_subset = SubsetSelect(self,
                                       'bg_subset_items',
                                       'bg_subset_selected',
                                       default_text='Manual',
-                                      manual_options=['Manual', 'Annulus'],
-                                      allowed_type='spatial')
+                                      manual_options=['Manual'],
+                                      filters=['is_spatial', 'is_not_composite'])
 
         headers = ['xcenter', 'ycenter', 'sky_center',
                    'sum', 'sum_aper_area',
@@ -83,10 +79,13 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
 
         self._selected_data = None
         self._selected_subset = None
-        self._fig = bqplot.Figure()
         self.plot_types = ["Curve of Growth", "Radial Profile", "Radial Profile (Raw)"]
         self.current_plot_type = self.plot_types[0]
         self._fitted_model_name = 'phot_radial_profile'
+
+        self.plot.add_line('line', color='gray', marker_size=32)
+        self.plot.add_scatter('scatter', color='gray', default_size=1)
+        self.plot.add_line('fit_line', color='magenta', line_style='dashed')
 
         self.session.hub.subscribe(self, SubsetUpdateMessage, handler=self._on_subset_update)
         self.session.hub.subscribe(self, LinkUpdatedMessage, handler=self._on_link_update)
@@ -159,7 +158,7 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
         if self.dataset_selected == '' or self.subset_selected == '':
             return
 
-        # Force background auto-calculation (including annulus) to update when linking has changed.
+        # Force background auto-calculation to update when linking has changed.
         self._subset_selected_changed()
 
     @observe('subset_selected')
@@ -169,21 +168,15 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
             return
 
         try:
-            self._selected_subset = _get_region_from_spatial_subset(self, subset_selected)
+            self._selected_subset = _get_region_from_spatial_subset(
+                self, self.subset.selected_subset_state)
             self._selected_subset.meta['label'] = subset_selected
 
-            if isinstance(self._selected_subset, CirclePixelRegion):
-                self.bg_annulus_inner_r = self._selected_subset.radius
-            elif isinstance(self._selected_subset, EllipsePixelRegion):
-                self.bg_annulus_inner_r = max(self._selected_subset.width,
-                                              self._selected_subset.height) * 0.5
-            elif isinstance(self._selected_subset, RectanglePixelRegion):
-                self.bg_annulus_inner_r = np.sqrt(self._selected_subset.width ** 2 +
-                                                  self._selected_subset.height ** 2) * 0.5
-            else:  # pragma: no cover
-                raise TypeError(f'Unsupported region shape: {self._selected_subset.__class__}')
-
-            self.subset_area = int(np.ceil(self._selected_subset.area))
+            # Sky subset does not have area. Not worth it to calculate just for a warning.
+            if hasattr(self._selected_subset, 'area'):
+                self.subset_area = int(np.ceil(self._selected_subset.area))
+            else:
+                self.subset_area = 0
 
         except Exception as e:
             self._selected_subset = None
@@ -198,26 +191,13 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
         # except here we only care about one stat for the background.
         data = self._selected_data
         comp = data.get_component(data.main_components[0])
+        if hasattr(reg, 'to_pixel'):
+            reg = reg.to_pixel(data.coords)
         aper_mask_stat = reg.to_mask(mode='center')
         img_stat = aper_mask_stat.get_values(comp.data, mask=None)
 
         # photutils/background/_utils.py --> nanmedian()
         return np.nanmedian(img_stat)  # Naturally in data unit
-
-    @observe('bg_annulus_inner_r', 'bg_annulus_width')
-    def _bg_annulus_updated(self, *args):
-        if self.bg_subset_selected != 'Annulus':
-            return
-
-        try:
-            inner_r = float(self.bg_annulus_inner_r)
-            reg = CircleAnnulusPixelRegion(
-                self._selected_subset.center, inner_radius=inner_r,
-                outer_radius=inner_r + float(self.bg_annulus_width))
-            self.background_value = self._calc_bg_subset_median(reg)
-
-        except Exception:  # Error snackbar suppressed to prevent excessive queue.
-            self.background_value = 0
 
     @observe('bg_subset_selected')
     def _bg_subset_selected_changed(self, event={}):
@@ -225,12 +205,9 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
         if bg_subset_selected == 'Manual':
             # we'll later access the user's self.background_value directly
             return
-        if bg_subset_selected == 'Annulus':
-            self._bg_annulus_updated()
-            return
 
         try:
-            reg = _get_region_from_spatial_subset(self, bg_subset_selected)
+            reg = _get_region_from_spatial_subset(self, self.bg_subset.selected_subset_state)
             self.background_value = self._calc_bg_subset_median(reg)
         except Exception as e:
             self.background_value = 0
@@ -245,8 +222,6 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
 
         data = self._selected_data
         reg = self._selected_subset
-        xcenter = reg.center.x
-        ycenter = reg.center.y
 
         # Reset last fitted model
         fit_model = None
@@ -259,10 +234,18 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
                 bg = float(self.background_value)
             except ValueError:  # Clearer error message
                 raise ValueError('Missing or invalid background value')
-            if data.coords is not None:
-                sky_center = data.coords.pixel_to_world(xcenter, ycenter)
+
+            if hasattr(reg, 'to_pixel'):
+                sky_center = reg.center
+                xcenter, ycenter = data.coords.world_to_pixel(sky_center)
             else:
-                sky_center = None
+                xcenter = reg.center.x
+                ycenter = reg.center.y
+                if data.coords is not None:
+                    sky_center = data.coords.pixel_to_world(xcenter, ycenter)
+                else:
+                    sky_center = None
+
             aperture = regions2aperture(reg)
             include_pixarea_fac = False
             include_counts_fac = False
@@ -329,7 +312,7 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
             phot_table.add_columns(
                 [xcenter * u.pix, ycenter * u.pix, sky_center,
                  bg, pixarea_fac, sum_ct, sum_ct_err, ctfac, sum_mag, flux_scale, data.label,
-                 reg.meta.get('label', ''), Time(datetime.utcnow())],
+                 reg.meta.get('label', ''), Time(datetime.now(tz=timezone.utc))],
                 names=['xcenter', 'ycenter', 'sky_center', 'background', 'pixarea_tot',
                        'aperture_sum_counts', 'aperture_sum_counts_err', 'counts_fac',
                        'aperture_sum_mag', 'flux_scaling',
@@ -345,48 +328,40 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
                 self.table.add_item(phot_table)
 
             # Plots.
-            # TODO: Jenn wants title at bottom.
-            bqplot_clear_figure(self._fig)
-            self._fig.title_style = {'font-size': '12px'}
-            # NOTE: default margin in bqplot is 60 in all directions
-            self._fig.fig_margin = {'top': 60, 'bottom': 60, 'left': 40, 'right': 10}
-            line_x_sc = bqplot.LinearScale()
-            line_y_sc = bqplot.LinearScale()
+            line = self.plot.marks['line']
+            sc = self.plot.marks['scatter']
+            fit_line = self.plot.marks['fit_line']
 
             if self.current_plot_type == "Curve of Growth":
-                self._fig.title = 'Curve of growth from aperture center'
+                self.plot.figure.title = 'Curve of growth from aperture center'
                 x_arr, sum_arr, x_label, y_label = _curve_of_growth(
                     comp_data, (xcenter, ycenter), aperture, phot_table['sum'][0],
                     wcs=data.coords, background=bg, pixarea_fac=pixarea_fac)
-                self._fig.axes = [bqplot.Axis(scale=line_x_sc, label=x_label),
-                                  bqplot.Axis(scale=line_y_sc, orientation='vertical',
-                                              label=y_label)]
-                bqplot_line = bqplot.Lines(x=x_arr, y=sum_arr, marker='circle',
-                                           scales={'x': line_x_sc, 'y': line_y_sc},
-                                           marker_size=32, colors='gray')
-                bqplot_marks = [bqplot_line]
+                line.x, line.y = x_arr, sum_arr
+                self.plot.clear_marks('scatter', 'fit_line')
+                self.plot.figure.axes[0].label = x_label
+                self.plot.figure.axes[1].label = y_label
 
             else:  # Radial profile
-                self._fig.axes = [bqplot.Axis(scale=line_x_sc, label='pix'),
-                                  bqplot.Axis(scale=line_y_sc, orientation='vertical',
-                                              label=comp.units or 'Value')]
+                self.plot.figure.axes[0].label = 'pix'
+                self.plot.figure.axes[1].label = comp.units or 'Value'
 
                 if self.current_plot_type == "Radial Profile":
-                    self._fig.title = 'Radial profile from aperture center'
+                    self.plot.figure.title = 'Radial profile from aperture center'
                     x_data, y_data = _radial_profile(
                         phot_aperstats.data_cutout, phot_aperstats.bbox, (xcenter, ycenter),
                         raw=False)
-                    bqplot_line = bqplot.Lines(x=x_data, y=y_data, marker='circle',
-                                               scales={'x': line_x_sc, 'y': line_y_sc},
-                                               marker_size=32, colors='gray')
+                    line.x, line.y = x_data, y_data
+                    self.plot.clear_marks('scatter')
+
                 else:  # Radial Profile (Raw)
-                    self._fig.title = 'Raw radial profile from aperture center'
+                    self.plot.figure.title = 'Raw radial profile from aperture center'
                     x_data, y_data = _radial_profile(
                         phot_aperstats.data_cutout, phot_aperstats.bbox, (xcenter, ycenter),
                         raw=True)
-                    bqplot_line = bqplot.Scatter(x=x_data, y=y_data, marker='circle',
-                                                 scales={'x': line_x_sc, 'y': line_y_sc},
-                                                 default_size=1, colors='gray')
+
+                    sc.x, sc.y = x_data, y_data
+                    self.plot.clear_marks('line')
 
                 # Fit Gaussian1D to radial profile data.
                 if self.fit_radial_profile:
@@ -400,7 +375,7 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
                     gs = Gaussian1D(amplitude=y_max, mean=x_mean, stddev=std,
                                     fixed={'amplitude': True},
                                     bounds={'amplitude': (y_max * 0.5, y_max)})
-                    if Version(astropy.__version__) < Version('5.2'):
+                    if ASTROPY_LT_5_2:
                         fitter_kw = {}
                     else:
                         fitter_kw = {'filter_non_finite': True}
@@ -412,21 +387,17 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
                             f"Radial profile fitting: {msg}", color='warning', sender=self))
                     y_fit = fit_model(x_data)
                     self.app.fitted_models[self._fitted_model_name] = fit_model
-                    bqplot_fit = bqplot.Lines(x=x_data, y=y_fit, marker=None,
-                                              scales={'x': line_x_sc, 'y': line_y_sc},
-                                              colors='magenta', line_style='dashed')
-                    bqplot_marks = [bqplot_line, bqplot_fit]
+                    fit_line.x, fit_line.y = x_data, y_fit
                 else:
-                    bqplot_marks = [bqplot_line]
+                    self.plot.clear_marks('fit_line')
 
         except Exception as e:  # pragma: no cover
-            bqplot_clear_figure(self._fig)
+            self.plot.clear_all_marks()
             msg = f"Aperture photometry failed: {repr(e)}"
             self.hub.broadcast(SnackbarMessage(msg, color='error', sender=self))
             self.result_failed_msg = msg
         else:
             self.result_failed_msg = ''
-            self._fig.marks = bqplot_marks
 
             # Parse results for GUI.
             tmp = []
@@ -464,9 +435,159 @@ class SimpleAperturePhotometry(PluginTemplateMixin, DatasetSelectMixin, TableMix
             self.results = tmp
             self.fit_results = fit_tmp
             self.result_available = True
-            self.radial_plot = self._fig
-            self.bqplot_figs_resize = [self._fig]
             self.plot_available = True
+
+    def unpack_batch_options(self, **options):
+        """
+        Unpacks a dictionary of options for batch mode, including all combinations of any values
+        passed as tuples or lists.  For example::
+
+            unpack_batch_options(dataset=['image1', 'image2'],
+                                 subset=['Subset 1', 'Subset 2'],
+                                 bg_subset=['Subset 3'],
+                                 flux_scaling=3
+                                 )
+
+        would result in::
+
+            [{'subset': 'Subset 1',
+              'dataset': 'image1',
+              'bg_subset': 'Subset 3',
+              'flux_scaling': 3},
+             {'subset': 'Subset 2',
+              'dataset': 'image1',
+              'bg_subset': 'Subset 3',
+              'flux_scaling': 3},
+             {'subset': 'Subset 1',
+              'dataset': 'image2',
+              'bg_subset': 'Subset 3',
+              'flux_scaling': 3},
+             {'subset': 'Subset 2',
+              'dataset': 'image2',
+              'bg_subset': 'Subset 3',
+              'flux_scaling': 3}]
+
+        Parameters
+        ----------
+        options : dict
+            Dictionary of values to override from the values set in the plugin/traitlets.  Each
+            entry can either be a single value, or a list.  All combinations of those that contain
+            a list will be exposed
+
+        Returns
+        -------
+        options : list
+            List of all combinations of input parameters, which can then be used as input to
+            `batch_aper_phot`
+        """
+        if not isinstance(options, dict):
+            raise TypeError("options must be a dictionary")
+        # TODO: when enabling user API for this plugin, this should check that all inputs are
+        # exposed to self.user_api (rather than the internal self)
+        user_api = self  # .user_api
+        invalid_keys = [k for k in options.keys() if not hasattr(user_api, k)]
+        if len(invalid_keys):
+            raise ValueError(f"{invalid_keys} are not valid inputs for batch photometry")
+
+        def _is_single(v):
+            if isinstance(v, (list, tuple)):
+                if len(v) == 1:
+                    return True, v[0]
+                return False, v
+            return True, v
+
+        single_values, mult_values = {}, {}
+        for k, v in options.items():
+            is_single, this_value = _is_single(v)
+            if is_single:
+                single_values[k] = this_value
+            else:
+                mult_values[k] = this_value
+
+        def _unpack_dict_list(mult_values, single_values):
+            options_list = []
+            # loop over the first item in mult_values
+            # any remaining mult values will require recursion
+            this_attr, this_values = list(mult_values.items())[0]
+            remaining_mult_values = {k: v for j, (k, v) in enumerate(mult_values.items()) if j > 0}
+
+            for this_value in this_values:
+                if not len(remaining_mult_values):
+                    options_list += [{this_attr: this_value, **single_values}]
+                    continue
+                options_list += _unpack_dict_list(remaining_mult_values,
+                                                  {this_attr: this_value, **single_values})
+
+            return options_list
+
+        return _unpack_dict_list(mult_values, single_values)
+
+    def batch_aper_phot(self, options, full_exceptions=False):
+        """
+        Run aperture photometry over a list of options.  Values will be looped in order and any
+        unprovided options will remain at there previous values (either from a previous entry
+        in the list or from the plugin).  The plugin itself will update and will remain at the
+        final state from the last entry in the list.
+
+        To provide a list of values per-input, use `unpack_batch_options` to and pass that as input
+        here.
+
+        Parameters
+        ----------
+        options : list
+            Each entry will result in one computation of aperture photometry and should be
+            a dictionary of values to override from the values set in the plugin/traitlets.
+        full_exceptions : bool, optional
+            Whether to expose the full exception message for all failed iterations.
+        """
+        # input validation
+        if not isinstance(options, list):
+            raise TypeError("options must be a list of dictionaries")
+        if not np.all([isinstance(option, dict) for option in options]):
+            raise TypeError("options must be a list of dictionaries")
+
+        # these traitlets are automatically set based on the values of other traitlets in the
+        # plugin, and so we should apply any user-overrides LAST
+        attrs_auto_update = ('counts_factor', 'pixel_area', 'flux_scaling',
+                             'subset_area', 'background_value')
+
+        failed_iters, exceptions = [], []
+        for i, option in enumerate(options):
+            # NOTE: if we do not want the UI to update (and end up in the final state), then
+            # we would need to refactor the plugin so that all we can compute computed values
+            # from the selected dataset without necessarily observing and updating traitlets.
+            # We would still want to check any select component against the valid choices.
+            # We could then also skip creating/showing the plot and have a manual call to
+            # vue_do_aper_phot re-enable plotting
+
+            # order the dictionary so that items that might be automatically set based on other
+            # selections are applied LATER so that user-overrides can take place.
+            # NOTE: this could have non-obvious consequences if providing the override for
+            # one entry but not another.  Alternatively, we could reset all traitlets to the
+            # original state between each iteration of the for-loop
+            option_ordered = {k: v for k, v in option.items() if k not in attrs_auto_update}
+            option_ordered.update(**option)
+
+            try:
+                for attr, value in option.items():
+                    # TODO: when enabling user_api, skip this and call setattr directly
+                    # on self.user_api
+                    if hasattr(self, f'{attr}_selected'):
+                        attr = f'{attr}_selected'
+                    setattr(self, attr, value)
+                self.vue_do_aper_phot()
+            except Exception as e:
+                failed_iters.append(i)
+                if full_exceptions:
+                    exceptions.append(e)
+
+        if len(failed_iters):
+            err_msg = f"inputs {failed_iters} failed and were skipped."
+            if full_exceptions:
+                err_msg += f"  Exception messages: {exceptions}"
+            else:
+                err_msg += "  To see full exceptions, run individually or pass full_exceptions=True"  # noqa
+            raise RuntimeError(err_msg)
 
 
 # NOTE: These are hidden because the APIs are for internal use only
@@ -569,6 +690,9 @@ def _curve_of_growth(data, centroid, aperture, final_sum, wcs=None, background=0
 
     """
     n_datapoints += 1  # n + 1
+
+    if hasattr(aperture, 'to_pixel'):
+        aperture = aperture.to_pixel(wcs)
 
     if isinstance(aperture, CircularAperture):
         x_label = 'Radius (pix)'

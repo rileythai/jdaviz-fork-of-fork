@@ -80,7 +80,7 @@ from a terminal, type:
 .. code-block:: bash
 
     jdaviz --help
-    jdaviz specviz /path/to/data/spectral_file
+    jdaviz --layout=specviz /path/to/data/spectral_file
 
 For more information on the command line interfaces for each tool, see the
 `Jdaviz docs <https://jdaviz.readthedocs.io/en/latest/index.html>`_.
@@ -96,10 +96,14 @@ The power of ``jdaviz`` is that it can integrated into your Jupyter notebook wor
     from jdaviz import Specviz
 
     specviz = Specviz()
-    specviz.app
+    specviz.show()
 
 To learn more about the various ``jdaviz`` application configurations and loading data, see the
-`specviz <https://jdaviz.readthedocs.io/en/latest/specviz/import_data.html>`_, `cubeviz <https://jdaviz.readthedocs.io/en/latest/cubeviz/import_data.html>`_, `mosviz <https://jdaviz.readthedocs.io/en/latest/mosviz/import_data.html>`_, or `imviz <https://jdaviz.readthedocs.io/en/latest/imviz/import_data.html>`_ tools.
+`Specviz <https://jdaviz.readthedocs.io/en/latest/specviz/import_data.html>`_,
+`Cubeviz <https://jdaviz.readthedocs.io/en/latest/cubeviz/import_data.html>`_,
+`Mosviz <https://jdaviz.readthedocs.io/en/latest/mosviz/import_data.html>`_,
+`Imviz <https://jdaviz.readthedocs.io/en/latest/imviz/import_data.html>`_,
+or `Specviz2D <https://jdaviz.readthedocs.io/en/latest/specviz2d/import_data.html>`_ tools.
 
 ``jdaviz`` also provides a directory of `sample notebooks <https://jdaviz.readthedocs.io/en/latest/sample_notebooks.html>`_ to test the application, located in the ``notebooks`` sub-directory
 of the git repository.  ``CubevizExample.ipynb`` is provided as an example that loads a JWST data cube with the
@@ -117,6 +121,11 @@ If you uncover any issues or bugs, you can
 if they are not already reported. For faster responses, however, we encourage you to
 submit a `JWST Help Desk Ticket <https://jwsthelp.stsci.edu>`_.
 
+Recordings and instructional notebooks from live Jdaviz tutorials (as part of the JWebbinars series)
+can be found at `the JWebbinar website <https://www.stsci.edu/jwst/science-execution/jwebbinars>`_
+under the "Materials and Videos" expandable section. Scroll down to the bottom of that section to
+find materials from the most recent session (JWebbinar 24, March 2023).
+
 License & Attribution
 ---------------------
 
@@ -132,7 +141,7 @@ Cite ``jdaviz`` via our Zenodo record: https://doi.org/10.5281/zenodo.5513927.
 Contributing
 ------------
 
-We love contributions! jdaviz is open source,
+We love contributions! ``jdaviz`` is open source,
 built on open source, and we'd love to have you hang out in our community.
 
 **Imposter syndrome disclaimer**: We want your help. No, really.

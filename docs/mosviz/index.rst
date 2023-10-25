@@ -1,12 +1,11 @@
-
-.. image:: ../logos/mosviz.svg
-   :width: 400
+.. |mosviz_logo| image:: ../logos/mos.svg
+    :height: 42px
 
 .. _mosviz:
 
-######
-Mosviz
-######
+####################
+|mosviz_logo| Mosviz
+####################
 
 .. image:: https://stsci.box.com/shared/static/sbstzr702zqghc40x49g6zxsik6ayg6u.gif
     :alt: Introductory video tour of the Mosviz configuration and its features
@@ -31,7 +30,7 @@ To load a sample `NIRISS Nirspec Data Set <https://stsci.box.com/shared/static/o
 
 .. code-block:: bash
 
-    jdaviz mosviz /path/to/mosviz_nirspec_data_0.3/level3
+    jdaviz --layout=mosviz /path/to/mosviz_nirspec_data_0.3/level3
 
 Or to load in a Jupyter notebook, see the :gh-notebook:`MosvizExample` or :gh-notebook:`MosvizNIRISSExample`.
 

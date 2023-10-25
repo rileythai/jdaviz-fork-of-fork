@@ -9,6 +9,7 @@ settings:
     tray: true
     tab_headers: true
   dense_toolbar: false
+  server_is_remote: false
   context:
     notebook:
       max_height: 600px
@@ -27,6 +28,8 @@ tray:
   - imviz-line-profile-xy
   - imviz-aper-phot-simple
   - imviz-catalogs
+  - imviz-footprints
+  - imviz-rotate-canvas
   - g-export-plot
 viewer_area:
   - container: col

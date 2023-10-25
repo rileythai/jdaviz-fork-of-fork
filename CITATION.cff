@@ -31,6 +31,7 @@ authors:
   given-names: "Craig"
 - family-names: "Karatay"
   given-names: "Hatice"
+  orcid: "https://orcid.org/0009-0003-9872-9384"
 - family-names: "Kotler"
   given-names: "Jenn"
   orcid: "https://orcid.org/0000-0002-1294-7862"
@@ -60,15 +61,18 @@ authors:
 - family-names: "Robitaille"
   given-names: "Thomas"
   orcid: "https://orcid.org/0000-0002-8642-1329"
+- family-names: "Shanahan"
+  given-names: "Clare"
+  orcid: "https://orcid.org/0009-0008-4112-7418"
 - family-names: "Tollerud"
   given-names: "Erik"
   orcid: "https://orcid.org/0000-0002-9599-310X"
 - family-names: "Volfman"
   given-names: "Sabrina"
 title: "Jdaviz"
-version: 3.4.0
+version: 3.7.0
 doi: https://doi.org/10.5281/zenodo.5513927
-date-released: 2023-03-22
+date-released: 2023-09-21
 url: "https://github.com/spacetelescope/jdaviz"
 
 # see a full list of contributors here: https://github.com/spacetelescope/jdaviz/graphs/contributors

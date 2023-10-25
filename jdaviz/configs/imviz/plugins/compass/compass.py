@@ -1,8 +1,9 @@
-from traitlets import Unicode, observe
+from traitlets import Bool, Float, Unicode, observe
 
-from jdaviz.core.events import AddDataMessage, RemoveDataMessage
+from jdaviz.core.events import AddDataMessage, RemoveDataMessage, CanvasRotationChangedMessage
 from jdaviz.core.registries import tray_registry
-from jdaviz.core.template_mixin import PluginTemplateMixin, ViewerSelectMixin
+from jdaviz.core.template_mixin import (PluginTemplateMixin, ViewerSelectMixin,
+                                        skip_if_no_updates_since_last_active)
 from jdaviz.core.user_api import PluginUserApi
 
 __all__ = ['Compass']
@@ -23,40 +24,59 @@ class Compass(PluginTemplateMixin, ViewerSelectMixin):
     * ``data_label``: label of the top-layer shown in the compass (read-only)
     """
     template_file = __file__, "compass.vue"
+    uses_active_status = Bool(True).tag(sync=True)
+
     icon = Unicode("").tag(sync=True)
     data_label = Unicode("").tag(sync=True)
     img_data = Unicode("").tag(sync=True)
+    canvas_angle = Float(0).tag(sync=True)  # set by canvas rotation plugin
+    canvas_flip_horizontal = Bool(False).tag(sync=True)  # set by canvas rotation plugin
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.hub.subscribe(self, AddDataMessage, handler=self._on_viewer_data_changed)
         self.hub.subscribe(self, RemoveDataMessage, handler=self._on_viewer_data_changed)
+        self.hub.subscribe(self, CanvasRotationChangedMessage, handler=self._on_canvas_rotation_changed)  # noqa
 
     @property
     def user_api(self):
         return PluginUserApi(self, expose=('viewer',), readonly=('data_label',))
-
-    def show(self, *args, **kwargs):
-        super().show(*args, **kwargs)
-        self._compass_with_new_viewer(from_show=True)
 
     def _on_viewer_data_changed(self, msg=None):
         if self.viewer_selected:
             viewer = self.viewer.selected_obj
             viewer.on_limits_change()  # Force redraw
 
-    @observe("viewer_selected", "plugin_opened")
-    def _compass_with_new_viewer(self, *args, **kwargs):
+    def _on_canvas_rotation_changed(self, msg=None):
+        viewer_id = msg.viewer_id
+        if viewer_id != self.viewer_selected:
+            return
+
+        self._set_compass_rotation()
+
+    def _set_compass_rotation(self):
+        viewer_item = self.app._viewer_item_by_id(self.viewer.selected_id)
+        self.canvas_angle = viewer_item.get('canvas_angle', 0)  # noqa
+        self.canvas_flip_horizontal = viewer_item.get('canvas_flip_horizontal', False)
+
+    @observe("viewer_selected", "is_active")
+    @skip_if_no_updates_since_last_active()
+    def _compass_with_new_viewer(self, msg={}):
         if not hasattr(self, 'viewer'):
             # mixin object not yet initialized
             return
 
+        if not self.is_active:
+            return
+
         # There can be only one!
         for vid, viewer in self.app._viewer_store.items():
-            if vid == self.viewer.selected_id and (self.plugin_opened or kwargs.get('from_show')):
+            if vid == self.viewer.selected_id:
                 viewer.compass = self
                 viewer.on_limits_change()  # Force redraw
+
+                self._set_compass_rotation()
             else:
                 viewer.compass = None
 

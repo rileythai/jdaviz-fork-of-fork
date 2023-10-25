@@ -1,15 +1,18 @@
 import numpy as np
 
-from glue.core.subset import RoiSubsetState
 from glue_jupyter.bqplot.profile import BqplotProfileView
 from glue_jupyter.bqplot.image import BqplotImageView
-from glue_jupyter.bqplot.scatter.layer_artist import BqplotScatterLayerState
 from glue_jupyter.table import TableViewer
 
 from jdaviz.configs.imviz.helper import layer_is_image_data
 from jdaviz.components.toolbar_nested import NestedJupyterToolbar
 from jdaviz.core.registries import viewer_registry
-from jdaviz.utils import ColorCycler
+from jdaviz.utils import ColorCycler, get_subset_type, GLUE_JUPYTER_LT_0_18
+
+if GLUE_JUPYTER_LT_0_18:
+    from glue_jupyter.bqplot.scatter.layer_artist import BqplotScatterLayerState
+else:
+    from glue.viewers.scatter.state import ScatterLayerState as BqplotScatterLayerState
 
 __all__ = ['JdavizViewerMixin']
 
@@ -22,6 +25,7 @@ class JdavizViewerMixin:
     toolbar = None
     tools_nested = []
     _prev_limits = None
+    _native_mark_classnames = ('Lines', 'LinesGL', 'FRBImage', 'Contour')
 
     def __init__(self, *args, **kwargs):
         # NOTE: anything here most likely won't be called by viewers because of inheritance order
@@ -35,14 +39,16 @@ class JdavizViewerMixin:
         """
         Return all marks that are Lines/LinesGL objects (and not subclasses)
         """
-        return [m for m in self.figure.marks if m.__class__.__name__ in ['Lines', 'LinesGL']]
+        return [m for m in self.figure.marks
+                if m.__class__.__name__ in self._native_mark_classnames]
 
     @property
     def custom_marks(self):
         """
         Return all marks that are not Lines/LinesGL objects (but can be subclasses)
         """
-        return [m for m in self.figure.marks if m.__class__.__name__ not in ['Lines', 'LinesGL']]
+        return [m for m in self.figure.marks
+                if m.__class__.__name__ not in self._native_mark_classnames]
 
     def _subscribe_to_layers_update(self):
         # subscribe to new layers
@@ -109,13 +115,12 @@ class JdavizViewerMixin:
             # want to include the collapse function *unless* the layer is a spectral subset
             for subset in self.jdaviz_app.data_collection.subset_groups:
                 if subset.label == layer.layer.label:
-                    if isinstance(subset.subset_state, RoiSubsetState):
+                    subset_type = get_subset_type(subset)
+                    if subset_type == 'spatial':
                         return "mdi-chart-scatter-plot", suffix
                     else:
                         return "mdi-chart-bell-curve", ""
             return "", suffix
-
-            return '', ''
 
         visible_layers = {}
         for layer in self.state.layers[::-1]:
@@ -174,7 +179,8 @@ class JdavizViewerMixin:
                 self._expected_subset_layer_default(layer)
 
     def _on_subset_create(self, msg):
-        if self.__class__.__name__ == 'MosvizTableViewer':
+        from jdaviz.configs.mosviz.plugins.viewers import MosvizTableViewer
+        if isinstance(self, MosvizTableViewer):
             # MosvizTableViewer uses this as a mixin, but we do not need any of this layer
             # logic there
             return
@@ -185,6 +191,30 @@ class JdavizViewerMixin:
         # layers are added
         if msg.subset.label not in self._expected_subset_layers and msg.subset.label:
             self._expected_subset_layers.append(msg.subset.label)
+
+    def _on_subset_delete(self, msg):
+        """
+        This is needed to remove the "ghost" subset left over when the subset tool is active,
+        and the active subset is deleted. https://github.com/spacetelescope/jdaviz/issues/2499
+        is open to revert/update this if it ends up being addressed upstream in
+        https://github.com/glue-viz/glue-jupyter/issues/401.
+        """
+        from jdaviz.configs.mosviz.plugins.viewers import MosvizTableViewer
+        if isinstance(self, MosvizTableViewer):
+            # MosvizTableViewer uses this as a mixin, but we do not need any of this layer
+            # logic there
+            return
+
+        subset_tools = ['bqplot:truecircle', 'bqplot:rectangle', 'bqplot:ellipse',
+                        'bqplot:circannulus', 'bqplot:xrange']
+
+        if not len(self.session.edit_subset_mode.edit_subset):
+            if self.toolbar.active_tool_id in subset_tools:
+                if (hasattr(self.toolbar, "default_tool_priority") and
+                        len(self.toolbar.default_tool_priority)):
+                    self.toolbar.active_tool_id = self.toolbar.default_tool_priority[0]
+                else:
+                    self.toolbar.active_tool = None
 
     @property
     def active_image_layer(self):
@@ -219,9 +249,17 @@ class JdavizViewerMixin:
         return self.jdaviz_app._jdaviz_helper
 
     @property
+    def hub(self):
+        return self.session.hub
+
+    @property
     def reference_id(self):
         return self._reference_id
 
     @property
     def reference(self):
         return self.jdaviz_app._viewer_item_by_id(self.reference_id).get('reference')
+
+    def set_plot_axes(self):
+        # individual viewers can override to set custom axes labels/ticks/styling
+        return

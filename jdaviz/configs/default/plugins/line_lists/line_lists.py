@@ -4,6 +4,7 @@ import os
 import astropy.units as u
 from astropy import constants as const
 from astropy.table import QTable
+
 from glue.core.message import (SubsetCreateMessage,
                                SubsetDeleteMessage,
                                SubsetUpdateMessage)
@@ -69,15 +70,10 @@ class LineListTool(PluginTemplateMixin):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._default_spectrum_viewer_reference_name = kwargs.get(
-            "spectrum_viewer_reference_name", "spectrum-viewer"
-        )
-        self._default_flux_viewer_reference_name = kwargs.get(
-            "flux_viewer_reference_name", "flux-viewer"
-        )
         self._viewer = self.app.get_viewer(self._default_spectrum_viewer_reference_name)
         self._spectrum1d = None
-        self.available_lists = self._viewer.available_linelists()
+        if self._viewer:
+            self.available_lists = self._viewer.available_linelists()
         self.list_to_load = None
         self.loaded_lists = ["Custom"]
         self.list_contents = {"Custom": {"lines": [],
@@ -122,12 +118,25 @@ class LineListTool(PluginTemplateMixin):
                            handler=lambda x: self.update_line_mark_dict())
 
         # if set to auto (default), update the slider range when zooming on the spectrum viewer
-        self._viewer.state.add_callback("x_min",
-                                        lambda x_min: self._on_spectrum_viewer_limits_changed())
-        self._viewer.state.add_callback("x_max",
-                                        lambda x_max: self._on_spectrum_viewer_limits_changed())
+        if self._viewer:
+            self._viewer.state.add_callback("x_min",
+                                            lambda x_min: self._on_spectrum_viewer_limits_changed())
+            self._viewer.state.add_callback("x_max",
+                                            lambda x_max: self._on_spectrum_viewer_limits_changed())
 
         self._disable_if_no_data()
+
+    @property
+    def _default_spectrum_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_spectrum_viewer_reference_name', 'spectrum-viewer'
+        )
+
+    @property
+    def _default_flux_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_flux_viewer_reference_name', 'flux-viewer'
+        )
 
     def _disable_if_no_data(self):
         if len(self.app.data_collection) == 0:
@@ -199,7 +208,8 @@ class LineListTool(PluginTemplateMixin):
         self._on_spectrum_viewer_limits_changed()  # will also trigger _auto_slider_step
 
         # set the choices (and default) for the units for new custom lines
-        self.custom_unit_choices = create_spectral_equivalencies_list(viewer_data)
+        self.custom_unit_choices = create_spectral_equivalencies_list(
+            viewer_data.spectral_axis.unit)
         self.custom_unit = str(viewer_data.spectral_axis.unit)
 
     def _parse_redshift_msg(self, msg):
@@ -321,12 +331,7 @@ class LineListTool(PluginTemplateMixin):
             msg = RedshiftMessage("redshift", value, sender=self)
             self.app.hub.broadcast(msg)
 
-    @observe('plugin_opened')
     def _update_line_list_obs(self, *args):
-        if not self.plugin_opened:
-            return
-
-        new_list_contents = {}
         for list_name, line_list in self.list_contents.items():
             for i, line in enumerate(line_list['lines']):
                 if self._rs_line_obs_change[0] == list_name and self._rs_line_obs_change[1] == i:  # noqa
@@ -338,10 +343,9 @@ class LineListTool(PluginTemplateMixin):
                 else:
                     line_list['lines'][i]['obs'] = self._rest_to_obs(float(line['rest']))
 
-            new_list_contents[list_name] = line_list
+            self.list_contents[list_name] = line_list
 
-        self.list_contents = {}
-        self.list_contents = new_list_contents
+        self.send_state('list_contents')
 
     def vue_change_line_obs(self, kwargs):
         # NOTE: we can only pass one argument from vue (it seems), so we'll pass as
@@ -410,6 +414,8 @@ class LineListTool(PluginTemplateMixin):
 
     def _on_spectrum_viewer_limits_changed(self, event=None):
         sv = self.app.get_viewer(self._default_spectrum_viewer_reference_name)
+        if sv.state.x_min is None or sv.state.x_max is None:
+            return
         self.spectrum_viewer_min = float(sv.state.x_min)
         self.spectrum_viewer_max = float(sv.state.x_max)
 
@@ -510,10 +516,8 @@ class LineListTool(PluginTemplateMixin):
             list_contents[row["listname"]]["lines"].append(temp_dict)
             tmp_names_rest.append(row["name_rest"])
 
-        self.loaded_lists = []
-        self.loaded_lists = loaded_lists
-        self.list_contents = {}
-        self.list_contents = list_contents
+        self.send_state('loaded_lists')
+        self.send_state('list_contents')
 
         self._viewer.plot_spectral_lines(tmp_names_rest)
         self.update_line_mark_dict()
@@ -651,9 +655,9 @@ class LineListTool(PluginTemplateMixin):
         for line in lc[listname]["lines"]:
             line["show"] = True
             self._viewer.spectral_lines.loc[line["name_rest"]]["show"] = True
-        # Trick traitlets into updating
-        self.list_contents = {}
+
         self.list_contents = lc
+        self.send_state('list_contents')
 
         self._viewer.plot_spectral_lines()
         self.update_line_mark_dict()
@@ -662,14 +666,12 @@ class LineListTool(PluginTemplateMixin):
         """
         Toggle all lines in list to be hidden
         """
-        lc = self.list_contents
         name_rests = []
-        for line in lc[listname]["lines"]:
+        for line in self.list_contents[listname]["lines"]:
             line["show"] = False
             name_rests.append(line["name_rest"])
-        # Trick traitlets into updating
-        self.list_contents = {}
-        self.list_contents = lc
+
+        self.send_state('list_contents')
 
         self._viewer.erase_spectral_lines(name_rest=name_rests)
         self.update_line_mark_dict()
@@ -683,14 +685,12 @@ class LineListTool(PluginTemplateMixin):
                                            sender=self, color="error")
             self.hub.broadcast(warn_message)
             return
-        lc = self.list_contents
-        for listname in lc:
-            for line in lc[listname]["lines"]:
+        for listname in self.list_contents:
+            for line in self.list_contents[listname]["lines"]:
                 line["show"] = True
         self._viewer.spectral_lines["show"] = True
-        # Trick traitlets into updating
-        self.list_contents = {}
-        self.list_contents = lc
+
+        self.send_state('list_contents')
 
         self._viewer.plot_spectral_lines()
         self.update_line_mark_dict()
@@ -704,13 +704,11 @@ class LineListTool(PluginTemplateMixin):
                                            sender=self, color="error")
             self.hub.broadcast(warn_message)
             return
-        lc = self.list_contents
-        for listname in lc:
-            for line in lc[listname]["lines"]:
+        for listname in self.list_contents:
+            for line in self.list_contents[listname]["lines"]:
                 line["show"] = False
-        # Trick traitlets into updating
-        self.list_contents = {}
-        self.list_contents = lc
+
+        self.send_state('list_contents')
 
         self._viewer.erase_spectral_lines()
         self.update_line_mark_dict()
@@ -795,11 +793,10 @@ class LineListTool(PluginTemplateMixin):
         color = data['color']
         if "listname" in data:
             listname = data["listname"]
-            # force a copy so that the change is picked up by traitlets
-            lc = self.list_contents[listname].copy()
-            lc["color"] = color
 
-            for line in lc["lines"]:
+            self.list_contents[listname]["color"] = color
+
+            for line in self.list_contents[listname]["lines"]:
                 line["colors"] = color
                 # Update the astropy table entry
                 name_rest = line["name_rest"]
@@ -808,7 +805,7 @@ class LineListTool(PluginTemplateMixin):
                 if name_rest in self.line_mark_dict:
                     self.line_mark_dict[name_rest].colors = [color]
 
-            self.list_contents = {**self.list_contents, listname: lc}
+            self.send_state('list_contents')
 
         elif "linename" in data:
             pass

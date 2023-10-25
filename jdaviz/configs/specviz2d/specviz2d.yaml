@@ -6,6 +6,7 @@ settings:
     tray: true
     tab_headers: false
   dense_toolbar: false
+  server_is_remote: false
   context:
     notebook:
       max_height: 600px
@@ -21,7 +22,6 @@ tray:
   - spectral-extraction
   - g-gaussian-smooth
   - g-model-fitting
-  - g-unit-conversion
   - g-line-list
   - specviz-line-analysis
   - g-export-plot
@@ -36,5 +36,5 @@ viewer_area:
       - container: row
         viewers:
           - name: Spectrum
-            plot: specviz-profile-viewer
+            plot: mosviz-profile-viewer
             reference: spectrum-viewer

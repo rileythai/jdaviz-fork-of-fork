@@ -48,16 +48,19 @@ in the app-level toolbar. It might not show some static regions loaded
 via the API unless an interactive region is drawn after.
 
 If an existing subset is selected, the parameters of the subset will also be
-shown. Note that while parameters for compound regions (e.g., a subset with
-multiple disjoint regions) are displayed, the logical operations joining them
-(``OR``, ``AND``, etc.) are not shown.
+shown. Note that in addition to parameters for compound regions (e.g., a subset with
+multiple disjoint regions) being displayed, the logical operations joining them
+(``OR``, ``AND``, etc.) are shown as well for each region. This shows how all regions
+are added together to create the subset shown in the viewer.
 
-For a simple subset in Imviz only, you can choose to recenter it based
-on the selected Data. The centroid is calculated by
-:attr:`photutils.aperture.ApertureStats.centroid`, which is the
-center-of-mass of the data within the aperture.
+For a simple subset or group of subsets in Imviz only, you can choose to recenter based
+on the selected Data. To switch to multiselect mode, click the icon in the top right of
+the plugin and select multiple subsets from the drop-down menu.
+The centroid is calculated by :attr:`photutils.aperture.ApertureStats.centroid`,
+which is the center-of-mass of the data within the aperture.
 No background subtraction is performed. Click :guilabel:`Recenter`
 to change its parameters and move it to the calculated centroid.
+This may take multiple iterations to converge.
 
 .. note::
 
@@ -136,6 +139,10 @@ For an image with a valid WCS, the compass will show directions to North (N)
 and East (E) for ICRS sky coordinates. It also shows the currently displayed
 data label, the X and Y directions, and the zoom box.
 
+Note that when the axes canvas is rotated (by :ref:`rotate-canvas`), the zoom box corresponds
+to the set zoom limits, not the extent of the viewer.  Instead, the compass image itself is
+shown rotated/flipped to the same orientation.
+
 When you have multiple viewers created in Imviz, use the Viewer dropdown menu
 to change the active viewer that it tracks.
 
@@ -161,10 +168,6 @@ Simple Aperture Photometry
 
     Regardless of your workflow, any WCS distortion in an image is ignored.
 
-    When you have multiple images linked by WCS and they have different
-    pixel scales or sky orientation, the selected aperture may be incorrectly defined
-    for images that are not the reference image (usually the first loaded one).
-
 This plugin performs simple aperture photometry
 and plots a radial profile for one object within
 an interactively selected region. A typical workflow is as follows:
@@ -177,15 +180,18 @@ an interactively selected region. A typical workflow is as follows:
    object of interest using its center of mass, if you wish.
    Depending on the object, it may take several iterations for re-centering
    to converge, or it may never converge at all.
+
+   .. note::
+
+       You cannot use annulus region as aperture (an exception will be thrown)
+       but you may use it for background (see below).
+
 5. If you want to subtract background before performing photometry,
    you have the following 3 options. Otherwise if your image is already
    background subtracted, choose "Manual" and leave the background set at 0:
 
   * Manual: Enter the background value in the :guilabel:`Background value` field.
     This value must be in the same unit as display data, if applicable.
-  * Annulus: Enter its inner radius and width in the :guilabel:`Annulus inner radius`
-    and :guilabel:`Annulus width`, respectively. Median of the pixels within
-    the annulus region will be used but the annulus shape will not be shown on display.
   * Subset: Define a region for background calculation (median) using Subset draw tool
     and select that region using the :guilabel:`Background` dropdown menu. Only regions
     created with the :guilabel:`replace` option are acceptable as background regions
@@ -198,6 +204,15 @@ an interactively selected region. A typical workflow is as follows:
    in display data unit. Otherwise, it is only informational.
    If this field is not applicable for you, leave it at 0.
    **This field resets every time Data selection changes if auto-population not possible.**
+
+   .. warning::
+
+       If your data is in surface brightness units and pixels on the image
+       have varying sky area, you should first convert your data from
+       surface brightness to flux units before using this plugin.
+       This is because, for performance reasons, the plugin multiplies
+       by the area after the aperture sum is calculated.
+
 7. If you also want photometry result in the unit of counts, you can enter a
    conversion factor in the :guilabel:`Counts conversion factor` field. The value
    must be in the unit of display data unit per counts. This is used to convert linear
@@ -296,6 +311,57 @@ are not stored. To save the current result before submitting a new query, you ca
 
     The table returned from the API above may cover more sources than shown in the currently zoomed-in
     portion of the image. Additional steps will be needed to filter out these points, if necessary.
+
+
+.. _imviz-footprints:
+
+Footprints
+==========
+
+This plugin supports loading and overplotting instrument footprint overlays on the image viewers.
+Any number of overlays can be plotted simultaneously from any number of the available
+preset instruments (requires pysiaf to be installed) or by loading an Astropy regions object from
+a file.
+
+The top dropdown allows renaming, adding, and removing footprint overlays.  To modify the display
+and input parameters for a given overlay, select it in the dropdown, and modify the choices
+in the plugin to change its color, opacity, visibilities in any image viewer in the app, or to
+select between various preset instruments and change the input options (position on the sky,
+position angle, offsets, etc).
+
+To import a file, choose "From File..." from the presets dropdown and select a valid file (must
+be able to be parsed by `regions.Regions.read`).
+
+To import a regions file or object from the API:
+
+.. code-block:: python
+
+  fp = imviz.plugins['Footprints']
+  fp.open_in_tray()
+  fp.add_overlay('my imported overlay')  # or fp.rename_overlay to rename an existing entry
+  fp.import_region(region)
+
+
+
+.. _rotate-canvas:
+
+Canvas Rotation
+===============
+
+The canvas rotation plugin allows rotating and horizontally flipping the image to any arbitrary
+value by rotating the canvas axes themselves.  Note that this does not affect the underlying data, and
+exporting data to the notebook via the API will therefore not exhibit the same rotation.
+
+The :ref:`imviz-compass` will also rotate (and flip) accordingly, but will show the zoom box
+corresponding to the zoom limits, not the region shown in the viewer itself.
+
+Presets are provided to reset the orientation as well as to set north up and east either to the
+right or the left, as well as a slider and input to set the angle and a switch to set whether the
+axes should be flipped horizontally after applying the rotation (a vertical flip can be achieved
+via a 180 deg rotation and a horizontal flip).
+
+Due to browser limitations, Canvas Rotation is only available on Chromium-based browsers.
+
 
 .. _imviz-export-plot:
 

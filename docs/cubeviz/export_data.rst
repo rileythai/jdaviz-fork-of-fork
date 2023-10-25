@@ -22,26 +22,26 @@ can be used to extract the *spectrum* of a spatial subset named "Subset 1":
 
 .. code-block:: python
 
-    subset1_spec1d = cubeviz.specviz.get_spectra(subset_to_apply="Subset 1")
+    subset1_spec1d = cubeviz.specviz.get_spectra(spectral_subset="Subset 1")
 
 An example without accessing Specviz:
 
 .. code-block:: python
 
     subset1_spec1d = cubeviz.get_data(data_label=flux_data_label, 
-                                      subset_to_apply="Subset 1",
-                                      statistic="mean")
+                                      spatial_subset="Subset 1",
+                                      function="mean")
 
-Note that in the above example, the ``statistic`` keyword is used to tell Cubeviz
+Note that in the above example, the ``function`` keyword is used to tell Cubeviz
 how to collapse the flux cube down to a one dimensional spectrum - this is not 
 necessarily equivalent to the collapsed spectrum in the spectrum viewer, which 
-may have used a different collapse statistic.
+may have used a different collapse function.
 
 To get all subsets from the spectrum viewer:
 
 .. code-block:: python
 
-    subset1_spec1d = cubeviz.app.get_subsets_from_viewer("spectrum-viewer")
+    subset1_spec1d = cubeviz.specviz.app.get_subsets()
 
 To access the spatial regions themselves:
 

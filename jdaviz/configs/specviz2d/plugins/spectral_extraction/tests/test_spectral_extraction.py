@@ -24,7 +24,7 @@ def test_plugin(specviz2d_helper):
     sp2dv = specviz2d_helper.app.get_viewer('spectrum-2d-viewer')
     assert len(sp2dv.figure.marks) == 2
 
-    pext.open_in_tray()
+    pext.keep_active = True
     assert len(sp2dv.figure.marks) == 11
     assert pext.marks['trace'].visible is True
     assert len(pext.marks['trace'].x) > 0
@@ -63,8 +63,10 @@ def test_plugin(specviz2d_helper):
     trace = pext.export_trace(add_data=True)  # overwrite
     assert isinstance(trace, tracing.ArrayTrace)
 
+    # TODO: Investigate extra hidden mark from glue-jupyter, see
+    # https://github.com/spacetelescope/jdaviz/pull/2478#issuecomment-1731864411
     # 3 new trace objects should have been loaded and plotted in the spectrum-2d-viewer
-    assert len(sp2dv.figure.marks) == 14
+    assert len(sp2dv.figure.marks) == 15
 
     # interact with background section, check marks
     pext.trace_trace_selected = 'New Trace'
@@ -156,7 +158,7 @@ def test_user_api(specviz2d_helper):
     specviz2d_helper.load_data(spectrum_2d=fn)
 
     pext = specviz2d_helper.plugins['Spectral Extraction']
-    pext.open_in_tray()
+    pext.keep_active = True
 
     # test that setting a string to an AddResults object redirects to the label
     pext.bg_sub_add_results = 'override label'

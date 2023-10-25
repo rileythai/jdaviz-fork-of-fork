@@ -2,15 +2,21 @@ import os
 import time
 import threading
 from collections import deque
-
-import matplotlib.pyplot as plt
+import numpy as np
 
 from astropy.io import fits
+from astropy.utils import minversion
 from ipyvue import watch
+from glue.core.exceptions import IncompatibleAttribute
 from glue.config import settings
+from glue.core.subset import SubsetState, RangeSubsetState, RoiSubsetState
+
 
 __all__ = ['SnackbarQueue', 'enable_hot_reloading', 'bqplot_clear_figure',
-           'standardize_metadata', 'ColorCycler', 'alpha_index']
+           'standardize_metadata', 'ColorCycler', 'alpha_index', 'get_subset_type']
+
+NUMPY_LT_2_0 = not minversion("numpy", "2.0.dev")
+GLUE_JUPYTER_LT_0_18 = not minversion("glue_jupyter", "0.18.dev")
 
 # For Metadata Viewer plugin internal use only.
 PRIHDR_KEY = '_primary_header'
@@ -241,11 +247,22 @@ class ColorCycler:
     using the Glue default data color.
     """
     # default color cycle starts with the Glue default data color
-    # followed by the matplotlib default color cycle
+    # followed by the matplotlib default color cycle, except for the
+    # second color (orange) in the matplotlib cycle, which is too close
+    # to the jdaviz accent color (also orange).
     default_dark_gray = settings._defaults['DATA_COLOR']
-    default_color_palette = (
-        [default_dark_gray] + plt.rcParams['axes.prop_cycle'].by_key()['color']
-    )
+    default_color_palette = [
+        default_dark_gray,
+        '#1f77b4',
+        '#2ca02c',
+        '#d62728',
+        '#9467bd',
+        '#8c564b',
+        '#e377c2',
+        '#7f7f7f',
+        '#bcbd22',
+        '#17becf'
+    ]
 
     def __init__(self, counter=-1):
         self.counter = counter
@@ -260,3 +277,75 @@ class ColorCycler:
 
     def reset(self):
         self.counter = -1
+
+
+def get_subset_type(subset):
+    """
+    Determine the subset type of a subset or layer
+
+    Parameters
+    ----------
+    subset : glue.core.subset.Subset or glue.core.subset_group.GroupedSubset
+        should have ``subset_state`` as an attribute, otherwise will return ``None``.
+
+    Returns
+    -------
+    subset_type : str or None
+        'spatial', 'spectral', or None
+    """
+    if not hasattr(subset, 'subset_state'):
+        return None
+
+    while hasattr(subset.subset_state, 'state1'):
+        # this assumes no mixing between spatial and spectral subsets and just
+        # taking the first component (down the hierarchical tree) to determine the type
+        subset = subset.subset_state.state1
+
+    if isinstance(subset.subset_state, RoiSubsetState):
+        return 'spatial'
+    elif isinstance(subset.subset_state, RangeSubsetState):
+        return 'spectral'
+    else:
+        return None
+
+
+class MultiMaskSubsetState(SubsetState):
+    """
+    A subset state that can include a different mask for different datasets.
+    Adopted from https://github.com/glue-viz/glue/pull/2415
+
+    Parameters
+    ----------
+    masks : dict
+        A dictionary mapping data UUIDs to boolean arrays with the same
+        dimensions as the data arrays.
+    """
+
+    def __init__(self, masks=None):
+        super(MultiMaskSubsetState, self).__init__()
+        self._masks = masks
+
+    def to_mask(self, data, view=None):
+        if data.uuid in self._masks:
+            mask = self._masks[data.uuid]
+            if view is not None:
+                mask = mask[view]
+            return mask
+        else:
+            raise IncompatibleAttribute()
+
+    def copy(self):
+        return MultiMaskSubsetState(masks=self._masks)
+
+    def __gluestate__(self, context):
+        serialized = {key: context.do(value) for key, value in self._masks.items()}
+        return {'masks': serialized}
+
+    def total_masked_first_data(self):
+        first_data = next(iter(self._masks))
+        return len(np.where(self._masks[first_data])[0])
+
+    @classmethod
+    def __setgluestate__(cls, rec, context):
+        masks = {key: context.object(value) for key, value in rec['masks'].items()}
+        return cls(masks=masks)

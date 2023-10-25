@@ -1,3 +1,5 @@
+import os
+
 import gwcs
 import numpy as np
 from astropy import units as u
@@ -37,10 +39,24 @@ class AstrowidgetsImageViewerMixin:
         self.marker = {'color': 'red', 'alpha': 1.0, 'markersize': 5}
 
     def save(self, filename):
-        """Save out the current image view to given PNG filename."""
+        """Save out the current image view to given PNG filename.
+
+        Parameters
+        ----------
+        filename : str
+            PNG filename. If the given file already exists, it will be
+            silently overwritten.
+
+        """
         if not filename.lower().endswith('.png'):
             filename = filename + '.png'
-        self.figure.save_png(filename=filename)
+
+        # https://github.com/bqplot/bqplot/pull/1397
+        def on_png_received(data):
+            with open(os.path.expanduser(filename), 'bw') as f:
+                f.write(data)
+
+        self.figure.get_png_data(on_png_received)
 
     def center_on(self, point):
         """Centers the view on a particular point on the top visible layer.
@@ -427,7 +443,7 @@ class AstrowidgetsImageViewerMixin:
             Invalid marker name.
 
         """
-        from glue_jupyter.bqplot.scatter.layer_artist import BqplotScatterLayerState
+        from glue.viewers.scatter.state import ScatterLayerState
 
         if marker_name is None:
             marker_name = self._default_mark_tag_name
@@ -474,7 +490,7 @@ class AstrowidgetsImageViewerMixin:
             # Only can set alpha and color using self.add_data(), so brute force here instead.
             # https://github.com/glue-viz/glue/issues/2201
             for lyr in self.state.layers:
-                if isinstance(lyr, BqplotScatterLayerState) and lyr.layer.label == marker_name:
+                if isinstance(lyr, ScatterLayerState) and lyr.layer.label == marker_name:
                     for key, val in self.marker.items():
                         setattr(lyr, {'markersize': 'size'}.get(key, key), val)
                     break

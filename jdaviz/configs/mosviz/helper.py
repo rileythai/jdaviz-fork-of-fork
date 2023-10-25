@@ -1,7 +1,7 @@
+import os
 import warnings
 from copy import deepcopy
 from pathlib import Path
-from time import time
 from zipfile import is_zipfile
 
 import numpy as np
@@ -18,7 +18,8 @@ from jdaviz.configs.specviz import Specviz
 from jdaviz.configs.specviz.helper import _apply_redshift_to_spectra
 from jdaviz.configs.specviz2d import Specviz2d
 from jdaviz.configs.mosviz.plugins import jwst_header_to_skyregion
-from jdaviz.configs.mosviz.plugins.parsers import FALLBACK_NAME
+from jdaviz.configs.mosviz.plugins.parsers import (
+    FALLBACK_NAME, mos_spec1d_parser, mos_spec2d_parser)
 from jdaviz.configs.default.plugins.line_lists.line_list_mixin import LineListMixin
 
 __all__ = ['Mosviz']
@@ -37,10 +38,7 @@ class Mosviz(ConfigHelper, LineListMixin):
         super().__init__(*args, **kwargs)
 
         spec1d = self.app.get_viewer(self._default_spectrum_viewer_reference_name)
-        spec1d.scales['x'].observe(self._update_spec2d_x_axis, names=['min', 'max'])
-
         spec2d = self.app.get_viewer(self._default_spectrum_2d_viewer_reference_name)
-        spec2d.scales['x'].observe(self._update_spec1d_x_axis, names=['min', 'max'])
 
         image_viewer = self.app.get_viewer(self._default_image_viewer_reference_name)
 
@@ -75,12 +73,6 @@ class Mosviz(ConfigHelper, LineListMixin):
                                handler=self._redshift_listener)
 
         self._shared_image = False
-
-        self._scales1d = spec1d.scales['x']
-        self._scales2d = spec2d.scales['x']
-
-        self._panning_warning_triggered = False
-        self._last_panning_warning = 0
 
         self._update_in_progress = False
 
@@ -138,94 +130,6 @@ class Mosviz(ConfigHelper, LineListMixin):
 
         self._frozen_layers_cache = []
 
-        # Make sure world flipping has been handled correctly, as internal
-        # callbacks may have been made while limits were frozen.  This is
-        # especially important for NIRISS data.
-        self._update_spec2d_x_axis()
-
-    def _extend_world(self, spec1d, ext):
-        # Extend 1D spectrum world axis to enable panning (within reason) past
-        # the bounds of data
-        world = self.app.data_collection[spec1d]["World 0"].copy()
-        dw = world[1]-world[0]
-        prepend = np.linspace(world[0]-dw*ext, world[0]-dw, ext)
-        dw = world[-1]-world[-2]
-        append = np.linspace(world[-1]+dw, world[-1]+dw*ext, ext)
-        world = np.hstack((prepend, world, append))
-        return world
-
-    def _update_spec2d_x_axis(self, change=None):
-        # This assumes the two spectrum viewers have the same x-axis shape and
-        # wavelength solution, which should always hold
-        table_viewer = self.app.get_viewer(self._default_table_viewer_reference_name)
-
-        if self._update_in_progress or table_viewer.row_selection_in_progress:
-            return
-
-        min_1d = self._scales1d.min
-        max_1d = self._scales1d.max
-
-        spec1d = table_viewer._selected_data[self._default_spectrum_viewer_reference_name]
-        extend_by = int(self.app.data_collection[spec1d]["World 0"].shape[0])
-        world = self._extend_world(spec1d, extend_by)
-
-        # Workaround for flipped data
-        min_world, max_world = ((world[0], world[-1]) if not self._is_world_flipped()
-                                else (world[-1], world[0]))
-
-        # Warn the user if they've panned far enough away from the data
-        # that the viewers will desync
-        if min_1d < min_world or max_1d > max_world:
-            self._show_panning_warning()
-            return
-
-        self._panning_warning_triggered = False
-
-        idx_min = float((np.abs(world - min_1d)).argmin()) - extend_by
-        idx_max = float((np.abs(world - max_1d)).argmin()) - extend_by
-
-        self._update_in_progress = True
-        with self._scales2d.hold_sync():
-            self._scales2d.min = idx_min
-            self._scales2d.max = idx_max
-
-        self._update_in_progress = False
-
-    def _update_spec1d_x_axis(self, change=None):
-        # This assumes the two spectrum viewers have the same x-axis shape and
-        # wavelength solution, which should always hold
-        table_viewer = self.app.get_viewer(self._default_table_viewer_reference_name)
-
-        if self._update_in_progress or table_viewer.row_selection_in_progress:
-            return
-
-        min_2d = self._scales2d.min
-        max_2d = self._scales2d.max
-
-        spec1d = table_viewer._selected_data[self._default_spectrum_viewer_reference_name]
-        extend_by = int(self.app.data_collection[spec1d]["World 0"].shape[0])
-        world = self._extend_world(spec1d, extend_by)
-
-        idx_min = int(np.around(min_2d)) + extend_by
-        idx_max = int(np.around(max_2d)) + extend_by
-
-        # Warn the user if they've panned far enough away from the data
-        # that the viewers will desync
-        # Note: Because of the flipped data workaround, idx_min can be > idx_max
-        max_world = len(world)
-        if not (0 <= idx_min < max_world and 0 <= idx_max < max_world):
-            self._show_panning_warning()
-            return
-
-        self._panning_warning_triggered = False
-
-        self._update_in_progress = True
-        with self._scales1d.hold_sync():
-            self._scales1d.min = world[idx_min]
-            self._scales1d.max = world[idx_max]
-
-        self._update_in_progress = False
-
     def _redshift_listener(self, msg):
         '''Save new redshifts (including from the helper itself)'''
         if self._update_in_progress:
@@ -253,79 +157,44 @@ class Mosviz(ConfigHelper, LineListMixin):
         if value is not None:
             self.specviz.set_redshift(value)
 
-    def _show_panning_warning(self):
-        now = time()
-
-        # Limit the number of messages that can be send to 1 per 5 seconds
-        panning_warning_timeout = 5
-
-        if (not self._panning_warning_triggered
-                and now > self._last_panning_warning + panning_warning_timeout):
-            self._panning_warning_triggered = True
-            self._last_panning_warning = now
-            msg = ("Warning: panning too far away from the data may desync"
-                   "the 1D and 2D spectrum viewers")
-            msg = SnackbarMessage(msg, color='warning', sender=self)
-            self.app.hub.broadcast(msg)
-
-    def _is_world_flipped(self):
-        spec1d = self.app.get_viewer(
-            self._default_table_viewer_reference_name
-        )._selected_data.get(
-            self._default_spectrum_viewer_reference_name
-        )
-        if not spec1d:
-            return False
-        world = self.app.data_collection[spec1d]["World 0"]
-        return world[0] > world[-1]
-
     def _row_click_message_handler(self, msg):
         self._handle_image_zoom(msg)
-        self._handle_flipped_data()
         # expose the row to vue for each of the viewers
         self.app.state.settings = {**self.app.state.settings, 'mosviz_row': msg.selected_index}
 
     def _handle_image_zoom(self, msg):
         mos_data = self.app.data_collection['MOS Table']
 
+        if mos_data.find_component_id("Images") is None:
+            return
+
+        imview = self.app.get_viewer(self._default_image_viewer_reference_name)
+
         # trigger zooming the image, if there is an image
-        if mos_data.find_component_id("Images") is not None:
-            if msg.shared_image:
-                center, height = self._zoom_to_object_params(msg)
-            else:
-                try:
-                    center, height = self._zoom_to_slit_params(msg)
-                except IndexError:
-                    # If there's nothing in the spectrum2d viewer, we can't get slit info
-                    return
+        if msg.shared_image:
+            center, height = self._zoom_to_object_params(msg)
+        else:
+            center, height = self._zoom_to_slit_params(msg)
 
-            if center is None or height is None:
-                # Can't zoom if we couldn't figure out where to zoom (e.g. if RA/Dec not in table)
-                return
-
-            imview = self.app.get_viewer(self._default_image_viewer_reference_name)
-
-            image_axis_ratio = ((imview.axis_x.scale.max - imview.axis_x.scale.min) /
-                                (imview.axis_y.scale.max - imview.axis_y.scale.min))
+        if height is not None:
+            image_axis_ratio = (abs(imview.state.x_max - imview.state.x_min) /
+                                abs(imview.state.y_max - imview.state.y_min))
+            x_height = image_axis_ratio * height
+            cur_xcen = (imview.state.x_min + imview.state.x_max) * 0.5
+            cur_ycen = (imview.state.y_min + imview.state.y_max) * 0.5
 
             with delay_callback(imview.state, 'x_min', 'x_max', 'y_min', 'y_max'):
-                imview.state.x_min = center[0] - image_axis_ratio*height
-                imview.state.y_min = center[1] - height
-                imview.state.x_max = center[0] + image_axis_ratio*height
-                imview.state.y_max = center[1] + height
+                imview.state.x_min = cur_xcen - x_height
+                imview.state.y_min = cur_ycen - height
+                imview.state.x_max = cur_xcen + x_height
+                imview.state.y_max = cur_ycen + height
 
-    def _handle_flipped_data(self):
-        # Workaround for flipped data
-        if self._is_world_flipped():
-            min, max = self._scales2d.max, self._scales2d.min
-            with self._scales2d.hold_sync():
-                self._scales2d.min = min
-                self._scales2d.max = max
+        if center is not None:
+            imview.center_on(center)
 
     def _zoom_to_object_params(self, msg):
 
         table_data = self.app.data_collection['MOS Table']
-        imview = self.app.get_viewer(self._default_image_viewer_reference_name)
         specview = self.app.get_viewer(self._default_spectrum_2d_viewer_reference_name)
 
         if ("R.A." not in table_data.component_ids() or
@@ -338,12 +207,16 @@ class Mosviz(ConfigHelper, LineListMixin):
         if (ra == FALLBACK_NAME) or (dec == FALLBACK_NAME):
             return None, None
 
-        pixel_height = 0.5*(specview.axis_y.scale.max - specview.axis_y.scale.min)
-        point = SkyCoord(ra*u.deg, dec*u.deg)
+        try:
+            pixel_height = abs(specview.axis_y.scale.max - specview.axis_y.scale.min) * 0.5
+        except Exception:
+            pixel_height = None
+        else:
+            if pixel_height < 1:
+                pixel_height = None
+        sky = SkyCoord(ra, dec, unit='deg')
 
-        pix = imview.layers[0].layer.coords.world_to_pixel(point)
-
-        return pix, pixel_height
+        return sky, pixel_height
 
     def _zoom_to_slit_params(self, msg):
         imview = self.app.get_viewer(self._default_image_viewer_reference_name)
@@ -351,20 +224,15 @@ class Mosviz(ConfigHelper, LineListMixin):
 
         try:
             sky_region = jwst_header_to_skyregion(specview.layers[0].layer.meta)
-        except KeyError:
+        except Exception:
             # If the header didn't have slit params, can't zoom to it.
             return None, None
-        ra = sky_region.center.ra.deg
-        dec = sky_region.center.dec.deg
 
-        pix = imview.layers[0].layer.coords.world_to_pixel(sky_region.center)
-
-        # Height of slit in decimal degrees
-        height = sky_region.height.deg
-
-        upper = imview.layers[0].layer.coords.world_to_pixel(SkyCoord(ra*u.deg,
-                                                             (dec + height)*u.deg))
-        pixel_height = upper[1] - pix[1]
+        sky = sky_region.center
+        w = imview.layers[0].layer.coords
+        pix = w.world_to_pixel(sky)
+        upper = w.world_to_pixel(SkyCoord(sky.ra, sky.dec + sky_region.height))
+        pixel_height = abs(upper[1] - pix[1])  # y
 
         return pix, pixel_height
 
@@ -406,7 +274,7 @@ class Mosviz(ConfigHelper, LineListMixin):
 
     def load_data(self, spectra_1d=None, spectra_2d=None, images=None,
                   spectra_1d_label=None, spectra_2d_label=None,
-                  images_label=None, *args, **kwargs):
+                  images_label=None, directory=None, instrument=None):
         """
         Load and parse a set of MOS spectra and images.
 
@@ -445,43 +313,56 @@ class Mosviz(ConfigHelper, LineListMixin):
         directory : str, optional
             Instead of loading lists of spectra and images, the path to a directory
             containing all files for a single JWST observation may be given.
+            If this is provided, all the above inputs are ignored.
 
         instrument : {'niriss', 'nircam', 'nirspec'}, optional
-            Required if ``directory`` is specified. Value is not case sensitive.
+            Required and only used if ``directory`` is specified. Value is not case sensitive.
         """
         # Link data after everything is loaded
         self.app.auto_link = False
         allow_link_table = True
 
-        directory = kwargs.pop('directory', None)
-        instrument = kwargs.pop('instrument', None)
-        if instrument is not None:
+        if isinstance(instrument, str):
             instrument = instrument.lower()
 
-        if directory is not None and Path(directory).is_dir():
-            if instrument not in ('nirspec', 'niriss', 'nircam'):
-                raise ValueError(
-                    "Ambiguous MOS Instrument: Only JWST NIRSpec, NIRCam, and "
-                    f"NIRISS folder parsing are currently supported but got '{instrument}'")
-            if instrument == "nirspec":
-                super().load_data(directory, parser_reference="mosviz-nirspec-directory-parser")
-            else:  # niriss or nircam
-                self.load_jwst_directory(directory, instrument=instrument)
-        elif directory is not None and is_zipfile(str(directory)):
-            raise TypeError("Please extract your data first and provide the directory")
+        if images is not None and not isinstance(images, (list, tuple)):
+            single_image = True
+        else:
+            single_image = False
+
+        if directory is not None:
+            if is_zipfile(str(directory)):
+                raise TypeError("Please extract your data first and provide the directory")
+            elif os.path.isdir(directory):
+                if instrument not in ('nirspec', 'niriss', 'nircam'):
+                    raise ValueError(
+                        "Ambiguous MOS Instrument: Only JWST NIRSpec, NIRCam, and "
+                        f"NIRISS folder parsing are currently supported but got '{instrument}'")
+                if instrument == "nirspec":
+                    super().load_data(directory, parser_reference="mosviz-nirspec-directory-parser")
+                else:  # niriss or nircam
+                    self.load_jwst_directory(directory, instrument=instrument)
+            else:
+                raise NotImplementedError(f"{directory} is not a directory")
+
+        # For the following, always load in this order: 1d, 2d, images, metadata
 
         elif (spectra_1d is not None and spectra_2d is not None
                 and images is not None):
-            # If we have a single image for multiple spectra, tell the table viewer
-            if not isinstance(images, (list, tuple)) and isinstance(spectra_1d, (list, tuple)):
+            n_specs = self.load_1d_spectra(spectra_1d, spectra_1d_label)
+            self.load_2d_spectra(spectra_2d, spectra_2d_label)
+
+            # If we have a single image for multiple spectra, tell the table viewer.
+            if single_image:
                 self._shared_image = True
                 self.app.get_viewer(self._default_table_viewer_reference_name)._shared_image = True
-                self.load_images(images, images_label, share_image=len(spectra_1d))
+                if n_specs > 1:
+                    self.load_images(images, images_label, share_image=n_specs)
+                else:
+                    self.load_images(images, images_label)
             else:
                 self.load_images(images, images_label)
 
-            self.load_2d_spectra(spectra_2d, spectra_2d_label)
-            self.load_1d_spectra(spectra_1d, spectra_1d_label)
             self.load_metadata()
 
         elif spectra_1d is not None and spectra_2d is not None:
@@ -490,13 +371,35 @@ class Mosviz(ConfigHelper, LineListMixin):
             self.load_metadata()
 
         elif spectra_1d and images:
-            self.load_1d_spectra(spectra_1d, spectra_1d_label)
-            self.load_images(images, images_label)
+            n_specs = self.load_1d_spectra(spectra_1d, spectra_1d_label)
+
+            # If we have a single image for multiple spectra, tell the table viewer.
+            if single_image:
+                self._shared_image = True
+                self.app.get_viewer(self._default_table_viewer_reference_name)._shared_image = True
+                if n_specs > 1:
+                    self.load_images(images, images_label, share_image=n_specs)
+                else:
+                    self.load_images(images, images_label)
+            else:
+                self.load_images(images, images_label)
+
             allow_link_table = False
 
         elif spectra_2d and images:
-            self.load_2d_spectra(spectra_2d, spectra_2d_label)
-            self.load_images(images, images_label)
+            n_specs = self.load_2d_spectra(spectra_2d, spectra_2d_label)
+
+            # If we have a single image for multiple spectra, tell the table viewer.
+            if single_image:
+                self._shared_image = True
+                self.app.get_viewer(self._default_table_viewer_reference_name)._shared_image = True
+                if n_specs > 1:
+                    self.load_images(images, images_label, share_image=n_specs)
+                else:
+                    self.load_images(images, images_label)
+            else:
+                self.load_images(images, images_label)
+
             allow_link_table = False
 
         elif spectra_1d:
@@ -508,10 +411,7 @@ class Mosviz(ConfigHelper, LineListMixin):
             allow_link_table = False
 
         else:
-            self.app.hub.broadcast(SnackbarMessage(
-                "Warning: Please set valid values for the load_data() method",
-                color='warning', sender=self))
-            return
+            raise NotImplementedError("Please set valid values for the Mosviz.load_data() method")
 
         if allow_link_table:
             self.link_table_data(None)
@@ -534,8 +434,8 @@ class Mosviz(ConfigHelper, LineListMixin):
         self.app.get_viewer(self._default_table_viewer_reference_name).figure_widget.highlighted = 0
 
         # Notify the user that this all loaded successfully
-        loaded_msg = SnackbarMessage("MOS data loaded successfully", color="success", sender=self)
-        self.app.hub.broadcast(loaded_msg)
+        self.app.hub.broadcast(SnackbarMessage(
+            "MOS data loaded successfully", color="success", sender=self))
 
         self._default_visible_columns = self.get_column_names(True)
 
@@ -590,7 +490,7 @@ class Mosviz(ConfigHelper, LineListMixin):
         """
         self.app.load_data(file_obj=None, parser_reference="mosviz-metadata-parser")
 
-    def load_1d_spectra(self, data_obj, data_labels=None):
+    def load_1d_spectra(self, data_obj, data_labels=None, add_redshift_column=False):
         """
         Load and parse a set of 1D spectra objects.
 
@@ -604,12 +504,21 @@ class Mosviz(ConfigHelper, LineListMixin):
             String representing the label for the data item loaded via
             ``data_obj``. Can be a list of strings representing data labels
             for each item in ``data_obj`` if  ``data_obj`` is a list.
-        """
-        super().load_data(data_obj, parser_reference="mosviz-spec1d-parser",
-                          data_labels=data_labels)
-        self._add_redshift_column()
+        add_redshift_column : bool
+            Add redshift column to Mosviz table.
 
-    def load_2d_spectra(self, data_obj, data_labels=None):
+        Returns
+        -------
+        n_specs : int
+            Number of data objects loaded.
+
+        """
+        n_specs = mos_spec1d_parser(self.app, data_obj, data_labels=data_labels)
+        if add_redshift_column:
+            self._add_redshift_column()
+        return n_specs
+
+    def load_2d_spectra(self, data_obj, data_labels=None, add_redshift_column=False):
         """
         Load and parse a set of 2D spectra objects.
 
@@ -623,22 +532,34 @@ class Mosviz(ConfigHelper, LineListMixin):
             String representing the label for the data item loaded via
             ``data_obj``. Can be a list of strings representing data labels
             for each item in ``data_obj`` if  ``data_obj`` is a list.
-        """
-        super().load_data(data_obj, parser_reference="mosviz-spec2d-parser",
-                          data_labels=data_labels)
-        self._add_redshift_column()
+        add_redshift_column : bool
+            Add redshift column to Mosviz table.
 
-    def load_jwst_directory(self, data_obj, data_labels=None, instrument=None):
+        Returns
+        -------
+        n_specs : int
+            Number of data objects loaded.
+
+        """
+        n_specs = mos_spec2d_parser(self.app, data_obj, data_labels=data_labels)
+        if add_redshift_column:
+            self._add_redshift_column()
+        return n_specs
+
+    def load_jwst_directory(self, data_obj, data_labels=None, instrument=None,
+                            add_redshift_column=False):
+        """Load NIRISS or NIRCam data from a directory."""
         self.app.auto_link = False
         super().load_data(data_obj, parser_reference="mosviz-niriss-parser",
                           instrument=instrument)
 
         self.link_table_data(data_obj)
-        self._add_redshift_column()
+        if add_redshift_column:
+            self._add_redshift_column()
 
         self.app.auto_link = True
 
-    def load_images(self, data_obj, data_labels=None, share_image=0):
+    def load_images(self, data_obj, data_labels=None, share_image=0, add_redshift_column=False):
         """
         Load and parse a set of image objects. If providing a file path, it
         must be readable by ``astropy.io.fits``.
@@ -659,10 +580,13 @@ class Mosviz(ConfigHelper, LineListMixin):
             different row in the table does not reload the displayed image.
             Currently, if non-zero, the provided number must match the number of
             spectra.
+        add_redshift_column : bool
+            Add redshift column to Mosviz table.
         """
         super().load_data(data_obj, parser_reference="mosviz-image-parser",
                           data_labels=data_labels, share_image=share_image)
-        self._add_redshift_column()
+        if add_redshift_column:
+            self._add_redshift_column()
 
     def get_column_names(self, visible=None):
         """
@@ -1019,3 +943,25 @@ class Mosviz(ConfigHelper, LineListMixin):
         `~specutils.Spectrum1D`
         """
         return self._get_spectrum('2D Spectra', row, apply_slider_redshift)
+
+    def get_data(self, data_label=None, spectral_subset=None, cls=None):
+        """
+        Returns data with name equal to data_label of type cls with subsets applied from
+        spectral_subset.
+
+        Parameters
+        ----------
+        data_label : str, optional
+            Provide a label to retrieve a specific data set from data_collection.
+        spectral_subset : str, optional
+            Spectral subset applied to data.
+        cls : `~specutils.Spectrum1D`, `~astropy.nddata.CCDData`, optional
+            The type that data will be returned as.
+
+        Returns
+        -------
+        data : cls
+            Data is returned as type cls with subsets applied.
+
+        """
+        return self._get_data(data_label=data_label, spectral_subset=spectral_subset, cls=cls)

@@ -4,7 +4,6 @@ from traitlets import Bool, Unicode, observe
 
 from astropy import units as u
 from glue.core import BaseData
-from glue.core.subset import RoiSubsetState
 from glue.core.subset_group import GroupedSubset
 from glue_jupyter.bqplot.image.layer_artist import BqplotImageSubsetLayerArtist
 
@@ -17,19 +16,22 @@ from jdaviz.core.helpers import data_has_valid_wcs
 from jdaviz.core.marks import PluginScatter
 from jdaviz.core.registries import tool_registry
 from jdaviz.core.template_mixin import TemplateMixin, DatasetSelectMixin
+from jdaviz.utils import get_subset_type
 
 __all__ = ['CoordsInfo']
-
-_supported_viewer_classes = (SpecvizProfileView,
-                             ImvizImageView,
-                             CubevizImageView,
-                             MosvizImageView,
-                             MosvizProfile2DView)
 
 
 @tool_registry('g-coords-info')
 class CoordsInfo(TemplateMixin, DatasetSelectMixin):
     template_file = __file__, "coords_info.vue"
+
+    _supported_viewer_classes = (SpecvizProfileView,
+                                 ImvizImageView,
+                                 CubevizImageView,
+                                 MosvizImageView,
+                                 MosvizProfile2DView)
+
+    _viewer_classes_with_marker = (SpecvizProfileView,)
 
     dataset_icon = Unicode("").tag(sync=True)  # option for layer (auto, none, or specific layer)
     icon = Unicode("").tag(sync=True)  # currently exposed layer
@@ -57,7 +59,7 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
         # subscribe/unsubscribe to mouse events across all existing viewers
         viewer_refs = []
         for viewer in self.app._viewer_store.values():
-            if isinstance(viewer, _supported_viewer_classes):
+            if isinstance(viewer, self._supported_viewer_classes):
                 self._create_viewer_callbacks(viewer)
                 viewer_refs.append(viewer.reference_id)
 
@@ -72,8 +74,20 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
         # subscribe to mouse events on any new viewers
         self.hub.subscribe(self, ViewerAddedMessage, handler=self._on_viewer_added)
 
+    def _create_marks_for_viewer(self, viewer, id=None):
+        if id is None:
+            id = viewer.reference_id
+        if id in self._marks:
+            return
+        self._marks[id] = PluginScatter(viewer,
+                                        marker='rectangle', stroke_width=1,
+                                        visible=False)
+        viewer.figure.marks = viewer.figure.marks + [self._marks[id]]
+
     def _create_viewer_callbacks(self, viewer):
-        if isinstance(viewer, _supported_viewer_classes):
+        if isinstance(viewer, self._supported_viewer_classes):
+            if isinstance(viewer, self._viewer_classes_with_marker):
+                self._create_marks_for_viewer(viewer)
             callback = self._viewer_callback(viewer, self._viewer_mouse_event)
             viewer.add_event_callback(callback, events=['mousemove', 'mouseleave', 'mouseenter'])
 
@@ -94,11 +108,8 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
         # create marks for each of the spectral viewers (will need a listener event to create marks
         # for new viewers if dynamic creation of spectral viewers is ever supported)
         for id, viewer in self.app._viewer_store.items():
-            if isinstance(viewer, SpecvizProfileView):
-                self._marks[id] = PluginScatter(viewer,
-                                                marker='rectangle', stroke_width=1,
-                                                visible=False)
-                viewer.figure.marks = viewer.figure.marks + [self._marks[id]]
+            if isinstance(viewer, self._viewer_classes_with_marker):
+                self._create_marks_for_viewer(viewer, id)
         return self._marks
 
     def as_text(self):
@@ -242,7 +253,6 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
                     sky = image.coords.pixel_to_world(x, y).icrs
                 except Exception:  # WCS might not be celestial
                     coords_status = False
-                    self.reset_coords_display()
 
         elif isinstance(viewer, CubevizImageView):
             # TODO: This assumes data_collection[0] is the main reference
@@ -389,13 +399,10 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
 
     def _spectrum_viewer_update(self, viewer, x, y):
         def _cursor_fallback():
-            statistic = getattr(viewer.state, 'function', None)
-            cache_key = (viewer.state.layers[0].layer.label, statistic)
-            sp = self.app._get_object_cache.get(cache_key, viewer.data()[0])
             self._dict['axes_x'] = x
-            self._dict['axes_x:unit'] = sp.spectral_axis.unit.to_string()
+            self._dict['axes_x:unit'] = viewer.state.x_display_unit
             self._dict['axes_y'] = y
-            self._dict['axes_y:unit'] = sp.flux.unit.to_string()
+            self._dict['axes_y:unit'] = viewer.state.y_display_unit
             self._dict['data_label'] = ''
 
         def _copy_axes_to_spectral():
@@ -418,8 +425,6 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
             self.row3_text = ''
             self.icon = 'mdi-cursor-default'
             self.marks[viewer._reference_id].visible = False
-            # get the units from the first layer
-            # TODO: replace with display units once implemented
             _cursor_fallback()
             _copy_axes_to_spectral()
             return
@@ -438,7 +443,11 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
                 continue
 
             if isinstance(lyr.layer, GroupedSubset):
-                if not isinstance(lyr.layer.subset_state, RoiSubsetState):
+                subset_state = getattr(lyr.layer, 'subset_state', None)
+                if subset_state is None:
+                    continue
+                subset_type = get_subset_type(subset_state)
+                if subset_type == 'spectral':
                     # then this is a SPECTRAL subset
                     continue
                 # For use later in data retrieval
@@ -459,20 +468,25 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
                     sp = self.app._get_object_cache[cache_key]
                 else:
                     sp = self._specviz_helper.get_data(data_label=data_label,
-                                                       subset_to_apply=subset_label)
+                                                       spatial_subset=subset_label)
                     self.app._get_object_cache[cache_key] = sp
+
+                # Calculations have to happen in the frame of viewer display units.
+                disp_wave = sp.spectral_axis.to_value(viewer.state.x_display_unit, u.spectral())
+                disp_flux = sp.flux.to_value(viewer.state.y_display_unit,
+                                             u.spectral_density(sp.spectral_axis))
 
                 # Out of range in spectral axis.
                 if (self.dataset.selected != lyr.layer.label and
-                        (x < sp.spectral_axis.value.min() or x > sp.spectral_axis.value.max())):
+                        (x < disp_wave.min() or x > disp_wave.max())):
                     continue
 
-                cur_i = np.argmin(abs(sp.spectral_axis.value - x))
-                cur_wave = sp.spectral_axis[cur_i]
-                cur_flux = sp.flux[cur_i]
+                cur_i = np.argmin(abs(disp_wave - x))
+                cur_wave = disp_wave[cur_i]
+                cur_flux = disp_flux[cur_i]
 
-                dx = cur_wave.value - x
-                dy = cur_flux.value - y
+                dx = cur_wave - x
+                dy = cur_flux - y
                 cur_distance = math.sqrt(dx * dx + dy * dy)
                 if (closest_distance is None) or (cur_distance < closest_distance):
                     closest_distance = cur_distance
@@ -497,27 +511,34 @@ class CoordsInfo(TemplateMixin, DatasetSelectMixin):
             return
 
         self.row2_title = 'Wave'
-        self.row2_text = f'{closest_wave.value:10.5e} {closest_wave.unit.to_string()}'
-        self._dict['axes_x'] = closest_wave.value
-        self._dict['axes_x:unit'] = closest_wave.unit.to_string()
-        if closest_wave.unit != u.pix:
+        self.row2_text = f'{closest_wave:10.5e} {viewer.state.x_display_unit}'
+        self._dict['axes_x'] = closest_wave
+        self._dict['axes_x:unit'] = viewer.state.x_display_unit
+        if viewer.state.x_display_unit != u.pix:
             self.row2_text += f' ({int(closest_i)} pix)'
             if self.app.config == 'cubeviz':
                 # float to be compatible with nan
                 self._dict['slice'] = float(closest_i)
-                self._dict['spectral_axis'] = closest_wave.value
-                self._dict['spectral_axis:unit'] = closest_wave.unit.to_string()
+                self._dict['spectral_axis'] = closest_wave
+                self._dict['spectral_axis:unit'] = viewer.state.x_display_unit
             else:
                 # float to be compatible with nan
                 self._dict['index'] = float(closest_i)
 
+        if viewer.state.y_display_unit is None:
+            flux_unit = ""
+        else:
+            flux_unit = viewer.state.y_display_unit
         self.row3_title = 'Flux'
-        self.row3_text = f'{closest_flux.value:10.5e} {closest_flux.unit.to_string()}'
-        self._dict['axes_y'] = closest_flux.value
-        self._dict['axes_y:unit'] = closest_flux.unit.to_string()
+        self.row3_text = f'{closest_flux:10.5e} {flux_unit}'
+        self._dict['axes_y'] = closest_flux
+        self._dict['axes_y:unit'] = viewer.state.y_display_unit
 
-        self.icon = closest_icon
+        if closest_icon is not None:
+            self.icon = closest_icon
+        else:
+            self.icon = ""
 
-        self.marks[viewer._reference_id].update_xy([closest_wave.value], [closest_flux.value])  # noqa
+        self.marks[viewer._reference_id].update_xy([closest_wave], [closest_flux])
         self.marks[viewer._reference_id].visible = True
         _copy_axes_to_spectral()

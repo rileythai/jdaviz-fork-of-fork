@@ -11,7 +11,7 @@ See :meth:`jdaviz.configs.imviz.helper.Imviz.load_data` for more information.
 .. note::
 
     Loading too many datasets will cause performance problems due to
-    the number of links necessary; see :ref:`glue:linking-framework`
+    the number of links necessary; see :ref:`glueviz:linking-framework`
     for more information.
 
 .. _imviz-import-commandline:
@@ -25,7 +25,7 @@ Multiple data files may be provided:
 
 .. code-block:: bash
 
-    jdaviz imviz /my/image/data1.fits /my/image/data2.fits
+    jdaviz --layout=imviz /my/image/data1.fits /my/image/data2.fits
 
 .. _imviz-import-gui:
 
@@ -42,6 +42,9 @@ After clicking :guilabel:`Import`, the data file will be parsed and loaded into 
 application. A notification will appear to let users know if the data import
 was successful. Afterward, the new data set can be found in the :guilabel:`Data`
 tab of each viewer's options menu as described in :ref:`cubeviz-selecting-data`.
+
+Once data is loaded, you may use the :guilabel:`Import Data` button again
+to load regions from a ``.reg`` file; also see :ref:`imviz-import-regions-api`.
 
 .. _imviz-import-api:
 
@@ -86,7 +89,7 @@ You can create your own array to load into Imviz:
 JWST datamodels
 ---------------
 
-If you have a `jwst.datamodels <https://jwst-pipeline.readthedocs.io/en/latest/jwst/datamodels/index.html>`_
+If you have a `stdatamodels.datamodels <https://stdatamodels.readthedocs.io/en/latest/jwst/datamodels/index.html#data-models>`_
 object, you can load it into Imviz as follows:
 
 .. code-block:: python
@@ -101,8 +104,22 @@ object, you can load it into Imviz as follows:
     imviz.load_data(ndd, data_label='my_data_model')
     imviz.show()
 
-There is no plan to natively load such objects until ``datamodels``
-is separated from the ``jwst`` pipeline package.
+Roman datamodels
+----------------
+
+You can also load Nancy Grace Roman Space Telescope (hereafter, Roman) data products, which are
+provided as ASDF files. If an ASDF file has a ``roman`` attribute, Jdaviz will
+open it with `roman-datamodels <https://github.com/spacetelescope/roman_datamodels>`_.
+You must run ``pip install roman-datamodels`` separately as it is not automatically installed
+by Jdaviz.
+
+.. code-block:: python
+
+    from jdaviz import Imviz
+
+    imviz = Imviz()
+    imviz.load_data("WFI01_cal.asdf")
+    imviz.show()
 
 .. _imviz-import-catalogs-api:
 

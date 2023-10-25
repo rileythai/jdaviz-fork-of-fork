@@ -10,6 +10,7 @@ now supports 3D cubes and allows the Python-level interface and parsing tools to
 be defined in ``specutils`` instead of being duplicated in Jdaviz.
 :class:`~specutils.Spectrum1D` objects are very flexible in their capabilities, however,
 and hence should address most astronomical spectrum use cases.
+If you are creating your own data products, please read the page :ref:`create_products`.
 
 Cubeviz will automatically parse the data into the multiple viewers as described in
 :ref:`cubeviz-display-cubes`. For the best experience, data loaded into Cubeviz should contain valid WCS
@@ -49,7 +50,7 @@ a data product is optional:
 
 .. code-block:: bash
 
-    jdaviz cubeviz /my/directory/cube.fits
+    jdaviz --layout=cubeviz /my/directory/cube.fits
 
 .. _cubeviz-import-gui:
 
@@ -73,7 +74,7 @@ Importing data via the API
 
 Alternatively, users who work in a coding environment like a Jupyter
 notebook can access the Cubeviz helper class API. Using this API, users can
-load data into the application through code with the :py:meth:`~jdaviz.configs.specviz.helper.Specviz.load_spectrum`
+load data into the application through code with the :py:meth:`~jdaviz.configs.specviz.helper.Specviz.load_data`
 method, which takes as input a :class:`~specutils.Spectrum1D` object.
 
 FITS Files
@@ -132,7 +133,7 @@ You can create your own :class:`~specutils.Spectrum1D` object by hand to load in
 JWST datamodels
 ---------------
 
-If you have a `jwst.datamodels <https://jwst-pipeline.readthedocs.io/en/latest/jwst/datamodels/index.html>`_
+If you have a `stdatamodels.datamodels <https://stdatamodels.readthedocs.io/en/latest/jwst/datamodels/index.html#data-models>`_
 object, you can load it into Cubeviz as follows:
 
 .. code-block:: python
@@ -161,7 +162,7 @@ object, you can load it into Cubeviz as follows:
     # Create your spectrum1
     spec3d = Spectrum1D(data, wcs=my_wcs)
     cubeviz = Cubeviz()
-    cubeviz.load_spectrum(spec3d, data_label='My Cube')
+    cubeviz.load_data(spec3d, data_label='My Cube')
     cubeviz.show()
 
 There is no plan to natively load such objects until ``datamodels``

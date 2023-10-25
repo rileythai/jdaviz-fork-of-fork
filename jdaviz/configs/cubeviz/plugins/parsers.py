@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 from astropy import units as u
 from astropy.io import fits
+
 from astropy.time import Time
 from astropy.wcs import WCS
 from specutils import Spectrum1D
@@ -130,7 +131,7 @@ def parse_data(app, file_obj, data_type=None, data_label=None):
 
 
 def _return_spectrum_with_correct_units(flux, wcs, metadata, data_type, target_wave_unit=None,
-                                        hdulist=None):
+                                        hdulist=None, uncertainty=None, mask=None):
     """Upstream issue of WCS not using the correct units for data must be fixed here.
     Issue: https://github.com/astropy/astropy/issues/3658
     """
@@ -138,11 +139,11 @@ def _return_spectrum_with_correct_units(flux, wcs, metadata, data_type, target_w
         warnings.filterwarnings(
             'ignore', message='Input WCS indicates that the spectral axis is not last',
             category=UserWarning)
-        sc = Spectrum1D(flux=flux, wcs=wcs)
+        sc = Spectrum1D(flux=flux, wcs=wcs, uncertainty=uncertainty, mask=mask)
 
     if target_wave_unit is None and hdulist is not None:
         found_target = False
-        for ext in ('SCI', 'FLUX', 'PRIMARY'):  # In priority order
+        for ext in ('SCI', 'FLUX', 'PRIMARY', 'DATA'):  # In priority order
             if found_target:
                 break
             if ext not in hdulist:
@@ -152,7 +153,7 @@ def _return_spectrum_with_correct_units(flux, wcs, metadata, data_type, target_w
             for cunit_num in (3, 1):
                 cunit_key = f"CUNIT{cunit_num}"
                 ctype_key = f"CTYPE{cunit_num}"
-                if cunit_key in hdr and 'WAVE' in hdr[ctype_key]:
+                if cunit_key in hdr and 'WAV' in hdr[ctype_key]:
                     target_wave_unit = u.Unit(hdr[cunit_key])
                     found_target = True
                     break
@@ -167,7 +168,10 @@ def _return_spectrum_with_correct_units(flux, wcs, metadata, data_type, target_w
             new_sc = Spectrum1D(
                 flux=sc.flux,
                 spectral_axis=sc.spectral_axis.to(target_wave_unit, u.spectral()),
-                meta=metadata)
+                meta=metadata,
+                uncertainty=sc.uncertainty,
+                mask=sc.mask
+            )
     else:
         sc.meta = metadata
         new_sc = sc
@@ -289,8 +293,8 @@ def _parse_jwst_s3d(app, hdulist, data_label, ext='SCI',
         app.add_data_to_viewer(spectrum_viewer_reference_name, data_label)
 
 
-def _parse_esa_s3d(app, hdulist, data_label, ext='DATA', viewer_name='flux-viewer',
-                   flux_viewer_reference_name=None, spectrum_viewer_reference_name=None):
+def _parse_esa_s3d(app, hdulist, data_label, ext='DATA', flux_viewer_reference_name=None,
+                   spectrum_viewer_reference_name=None):
     hdu = hdulist[ext]
     data_type = _get_data_type_by_hdu(hdu)
 
@@ -327,9 +331,8 @@ def _parse_esa_s3d(app, hdulist, data_label, ext='DATA', viewer_name='flux-viewe
     if data_type == 'flux':  # Forced wave unit conversion made it lose stuff, so re-add
         app.data_collection[-1].get_component("flux").units = flux.unit
 
-    app.add_data_to_viewer(viewer_name, data_label)
-    if viewer_name == flux_viewer_reference_name:
-        app.add_data_to_viewer(spectrum_viewer_reference_name, data_label)
+    app.add_data_to_viewer(flux_viewer_reference_name, data_label)
+    app.add_data_to_viewer(spectrum_viewer_reference_name, data_label)
 
 
 def _parse_spectrum1d_3d(app, file_obj, data_label=None,

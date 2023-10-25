@@ -1,16 +1,26 @@
 <template>
   <v-container class="tray-plugin" style="padding-left: 24px; padding-right: 24px; padding-top: 12px">
+    <v-row>
+      <div style="width: calc(100% - 32px)">
+        <j-docs-link :link="link">{{ description }}</j-docs-link>
+      </div>
+      <div style="width: 32px">
+        <j-plugin-popout :popout_button="popout_button"></j-plugin-popout>
+      </div>
+    </v-row>
+    
     <v-row v-if="isDisabled()">
       <span> {{ getDisabledMsg() }}</span>
     </v-row>
     <div v-else>
-      <v-row>
-        <div style="width: calc(100% - 32px)">
-          <j-docs-link :link="link">{{ description }}</j-docs-link>
-        </div>
-        <div style="width: 32px">
-          <j-plugin-popout :popout_button="popout_button"></j-plugin-popout>
-        </div>
+      <v-row v-if="uses_active_status && keep_active !== undefined" style="padding-bottom: 24px">
+        <v-switch
+          v-model="keep_active"
+          @change="$emit('update:keep_active', $event)"
+          label="keep active"
+          hint="consider plugin active (showing any previews and enabling all keypress events) even when not opened"
+          persistent-hint>
+        </v-switch>
       </v-row>
       <slot></slot>
     </div>
@@ -19,7 +29,8 @@
 
 <script>
 module.exports = {
-  props: ['disabled_msg', 'description', 'link', 'popout_button'],
+  props: ['disabled_msg', 'description', 'link', 'popout_button',
+          'uses_active_status', 'keep_active'],
   methods: {
     isDisabled() {
       return this.getDisabledMsg().length > 0
@@ -27,7 +38,29 @@ module.exports = {
     getDisabledMsg() {
       return this.disabled_msg || ''
     },
-  }
+    sendPing(recursive) {
+      if (!this.$el.isConnected) {
+        return
+      }
+      if (!document.hidden) {
+        this.$emit('plugin-ping', Date.now())
+      }
+      if (!recursive) {
+        return
+      }
+      setTimeout(() => {
+        this.sendPing(true)          
+      }, 200)  // ms
+    }
+  },
+  mounted() {
+    this.sendPing(true);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        this.sendPing(false)
+      }
+    });
+  },
 };
 </script>
 

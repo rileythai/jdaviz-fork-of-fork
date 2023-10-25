@@ -9,22 +9,25 @@ from glue_jupyter.bqplot.common.tools import (CheckableTool,
                                               HomeTool, BqplotPanZoomMode,
                                               BqplotPanZoomXMode, BqplotPanZoomYMode,
                                               BqplotRectangleMode, BqplotCircleMode,
-                                              BqplotEllipseMode, BqplotXRangeMode,
-                                              BqplotYRangeMode, BqplotSelectionTool,
+                                              BqplotEllipseMode, BqplotCircularAnnulusMode,
+                                              BqplotXRangeMode, BqplotYRangeMode,
+                                              BqplotSelectionTool,
                                               INTERACT_COLOR)
 from bqplot.interacts import BrushSelector, BrushIntervalSelector
 
 from jdaviz.core.events import LineIdentifyMessage, SpectralMarksChangedMessage
+from jdaviz.core.marks import SpectralLine
 
 __all__ = []
 
-ICON_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'icons')
+ICON_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'data', 'icons'))
 
 
 # Override icons for built-in tools from glue-jupyter
 BqplotRectangleMode.icon = os.path.join(ICON_DIR, 'select_xy.svg')
 BqplotCircleMode.icon = os.path.join(ICON_DIR, 'select_circle.svg')
 BqplotEllipseMode.icon = os.path.join(ICON_DIR, 'select_ellipse.svg')
+BqplotCircularAnnulusMode.icon = os.path.join(ICON_DIR, 'select_annulus.svg')
 BqplotXRangeMode.icon = os.path.join(ICON_DIR, 'select_x.svg')
 BqplotYRangeMode.icon = os.path.join(ICON_DIR, 'select_y.svg')
 
@@ -35,6 +38,87 @@ class _BaseZoomHistory:
     def save_prev_zoom(self):
         self.viewer._prev_limits = (self.viewer.state.x_min, self.viewer.state.x_max,
                                     self.viewer.state.y_min, self.viewer.state.y_max)
+
+
+class _MatchedZoomMixin:
+    match_axes = ('x', 'y')
+    disable_matched_zoom_in_other_viewer = False
+
+    def _is_matched_viewer(self, viewer):
+        return True
+
+    def _iter_matched_viewers(self, include_self=False):
+        for viewer in self.viewer.session.application.viewers:
+            if viewer is self.viewer and not include_self:
+                continue
+            elif self._is_matched_viewer(viewer):
+                yield viewer
+
+    def _map_limits(self, from_viewer, to_viewer, limits={}):
+        return limits
+
+    def _post_activate(self):
+        return
+
+    @property
+    def match_keys(self):
+        keys = []
+        for ax in self.match_axes:
+            keys += [f'{ax}_min', f'{ax}_max']
+        return keys
+
+    def activate(self):
+        if self.disable_matched_zoom_in_other_viewer:
+            # mapping limits are not guaranteed to roundtrip, so we need to disable
+            # any linked tool in the "other" viewer
+            for viewer in self._iter_matched_viewers(include_self=False):
+                if isinstance(viewer.toolbar.active_tool, _MatchedZoomMixin):
+                    viewer.toolbar.active_tool_id = None
+
+        super().activate()
+        for k in self.match_keys:
+            self.viewer.state.add_callback(k, self.on_limits_change)
+
+        self._post_activate()
+
+        # Trigger a sync so the initial limits match
+        self.on_limits_change()
+
+    def deactivate(self):
+        for k in self.match_keys:
+            self.viewer.state.remove_callback(k, self.on_limits_change)
+
+        super().deactivate()
+
+    def on_limits_change(self, *args):
+        # from_lims: limits in the viewer belonging to the tool
+        from_lims = {k: getattr(self.viewer.state, k) for k in self.match_keys}
+
+        for viewer in self._iter_matched_viewers(include_self=False):
+            # orig_lims: limits in this "matched" viewer
+            # to_lims: proposed new limits for this "matched" viewer
+            orig_lims = {k: getattr(viewer.state, k) for k in self.match_keys}
+            to_lims = self._map_limits(self.viewer, viewer, from_lims)
+            with delay_callback(viewer.state, *self.match_keys):
+                for ax in self.match_axes:
+                    # to avoid recursion we'll only update the state if there is a change
+                    # outside a tolerance set by some fraction of the limits range
+                    if None in orig_lims.values():
+                        orig_range = np.inf
+                    else:
+                        orig_range = abs(orig_lims.get(f'{ax}_max') - orig_lims.get(f'{ax}_min'))
+                    to_range = abs(to_lims.get(f'{ax}_max') - to_lims.get(f'{ax}_min'))
+                    tol = 1e-6 * min(orig_range, to_range)
+
+                    for k in (f'{ax}_min', f'{ax}_max'):
+                        value = to_lims.get(k)
+                        orig_value = orig_lims.get(k)
+                        if not np.isnan(value) and (orig_value is None or
+                                                    abs(value-orig_lims.get(k, np.inf)) > tol):
+                            setattr(viewer.state, k, value)
+
+    def is_visible(self):
+        return len(self.viewer.jdaviz_app._viewer_store) > 1
 
 
 @viewer_tool
@@ -192,6 +276,27 @@ class XRangeZoom(_BaseSelectZoom):
 
 
 @viewer_tool
+class YRangeZoom(_BaseSelectZoom):
+    icon = os.path.join(ICON_DIR, 'zoom_yrange.svg')
+    tool_id = 'jdaviz:yrangezoom'
+    action_text = 'Vertical zoom'
+    tool_tip = 'Zoom to a drawn vertical region'
+
+    def _new_interact(self):
+        return BrushIntervalSelector(orientation='vertical',
+                                     scale=self.viewer.scale_y,
+                                     color=INTERACT_COLOR)
+
+    def on_update_zoom(self):
+        if self.interact.selected is None:
+            # a valid region was not drawn, perhaps just a click with no drag!
+            # let's ignore and reset the tool
+            return
+
+        self.viewer.state.y_min, self.viewer.state.y_max = self.interact.selected
+
+
+@viewer_tool
 class SelectLine(CheckableTool, HubListener):
     icon = os.path.join(ICON_DIR, 'line_select.svg')
     tool_id = 'jdaviz:selectline'
@@ -228,6 +333,9 @@ class SelectLine(CheckableTool, HubListener):
         # find line closest to mouse position and transmit event
         msg = LineIdentifyMessage(self.line_names[ind], sender=self)
         self.viewer.session.hub.broadcast(msg)
+
+    def is_visible(self):
+        return len([m for m in self.viewer.figure.marks if isinstance(m, SpectralLine)]) > 0
 
 
 class _BaseSidebarShortcut(Tool):

@@ -34,6 +34,7 @@ Plot Options
 ============
 
 This plugin gives access to per-viewer and per-layer plotting options.
+To show axes on image viewers, toggle on the "Show Axes" option at the bottom of the plugin.
 
 .. seealso::
 
@@ -268,9 +269,55 @@ in a notebook. The line or continuum flux in each spatial pixel
 can then be computed by integrating over the line or continuum
 spectral region of interest.
 
+
+.. _spectral-extraction:
+
+Spectral Extraction
+===================
+
+.. image:: ../img/cubeviz_spectral_extraction.png
+
+.. note::
+
+    Spectral Extraction requires at least version 5.3.2 of astropy.
+
+The Spectral Extraction plugin produces a 1D spectrum from a spectral
+cube. The 1D spectrum can be computed via the sum, mean, minimum, or
+maximum of the spatial dimensions in the spectral cube. Select an
+extraction operation from the :guilabel:`Function` dropdown, and
+optionally choose a :guilabel:`Spatial region`, if you have one.
+Click :guilabel:`EXTRACT` to produce a new 1D spectrum dataset
+from the spectral cube, which has uncertainties propagated by
+`astropy.nddata <https://docs.astropy.org/en/stable/nddata/nddata.html>`_.
+
 .. _cubeviz-export-plot:
 
 Export Plot
 ===========
 
 This plugin allows exporting the plot in a given viewer to various image formats.
+
+.. _cubeviz-export-video:
+
+Movie
+-----
+
+.. note::
+
+    For MPEG-4, this feature needs ``opencv-python`` to be installed;
+    see [opencv-python on PyPI](https://pypi.org/project/opencv-python/).
+
+Expand the "Export to video" section, then enter the desired starting and
+ending slice indices (inclusive), the frame rate in frames per second (FPS),
+and the filename.
+If a path is not given, the file will be saved to current working
+directory. Any existing file with the same name will be silently replaced.
+
+When you are ready, click the :guilabel:`Export to MP4` button.
+The movie will be recorded at the given FPS. While recording is in progress,
+it is highly recommended that you leave the app alone until it is done.
+
+While recording, there is an option to interrupt the recording when something
+goes wrong (e.g., it is taking too long or you realized you entered the wrong inputs).
+Click on the stop icon next to the :guilabel:`Export to MP4` button to interrupt it.
+Doing so will result in no output video.

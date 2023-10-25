@@ -1,10 +1,105 @@
-3.4.1 (unreleased)
+3.7.1 (unreleased)
 ==================
 
 Bug Fixes
 ---------
 
-- Fixed a bug where Import Data button crashes under certain condition. [#2110]
+- Fixed bug which did not update all references to a viewer's ID when
+  updating a viewer's reference name. [#2479]
+
+- Deleting a subset while actively editing it now deselects the subset tool,
+  preventing the appearance of "ghost" subsets. [#2497]
+
+- Fixes a bug in plot options where switching from multi to single-select mode
+  failed to properly update the selection. [#2505]
+
+Cubeviz
+^^^^^^^
+
+- Fixed moment map losing WCS when being written out to FITS file. [#2431]
+
+- Fixed parsing for VLT MUSE data cube so spectral axis unit is correctly converted. [#2504]
+
+Imviz
+^^^^^
+
+Mosviz
+^^^^^^
+
+Specviz
+^^^^^^^
+
+- Spectrum that has incompatible flux unit with what is already loaded
+  will no longer be loaded as ghost spectrum. It will now be rejected
+  with an error message on the snackbar. [#2485]
+
+Specviz2d
+^^^^^^^^^
+
+Other Changes and Additions
+---------------------------
+
+- Compatibility with Python 3.12. [#2473]
+
+3.7 (2023-09-21)
+================
+
+New Features
+------------
+
+- Improved design of Launcher and pass filepath arg from cli when no config specified. [#2311, #2417]
+
+- Subset Tools plugin now displays the parent data of a spatial (ROI) subset. [#2154]
+
+- Data color cycler and marker color updates for increased accessibility. [#2453]
+
+- Add support for ``MultiMaskSubsetState`` in ``viz.app.get_subsets()`` and in
+  the Subset Plugin [#2462]
+
+Cubeviz
+^^^^^^^
+
+- Add Spectral Extraction plugin for Cubeviz, which converts spectral cubes
+  to 1D spectra with propagated uncertainties [#2039]
+
+Imviz
+^^^^^
+
+- The stretch histogram within plot options can now be popped-out into its own window. [#2314]
+
+- vmin/vmax step size in the plot options plugin is now dynamic based on the full range of the
+  image. [#2388]
+
+- Footprints plugin for plotting overlays of instrument footprints or custom regions in the image
+  viewer. [#2341, #2377, #2413]
+
+- Add a curve to stretch histograms in the Plot Options plugin representing the colormap
+  stretch function. [#2390]
+
+- The stretch histogram is now downsampled for large images for improved performance. [#2408]
+
+- Add multiselect support to the subset plugin for recentering only. [#2430]
+
+Mosviz
+^^^^^^
+
+- Plot options now includes the stretch histogram previously implemented for Imviz/Cubeviz. [#2407]
+
+Specviz
+^^^^^^^
+
+- Improve visibility of live-collapsed spectra from spatial regions in Cubeviz [#2387]
+
+Specviz2d
+^^^^^^^^^
+
+- Plot options now includes the stretch histogram previously implemented for Imviz/Cubeviz. [#2407]
+
+API Changes
+-----------
+
+- Adjusted axis ticks and labels for spectrum viewers to be more readable.
+  Axes on image viewers no longer show by default. [#2372]
 
 Cubeviz
 ^^^^^^^
@@ -12,8 +107,15 @@ Cubeviz
 Imviz
 ^^^^^
 
-* Do not hide previous results in aperture photometry when there is a failure, but rather show
-  the failure message within the plugin UI to indicate the shown results are "out of date". [#2112]
+- Fixed Subset Tools unable to re-center non-composite spatial subset on an image
+  that is not the reference data when linked by WCS. [#2154]
+
+- Fixed inaccurate results when aperture photometry is performed on non-reference data
+  that are of a different pixel scale or are rotated w.r.t. the reference data when
+  linked by WCS. [#2154]
+
+- Fixed wrong angle translations between sky regions in ``regions`` and ``photutils``.
+  They were previously off by 90 degrees. [#2154]
 
 Mosviz
 ^^^^^^
@@ -23,6 +125,338 @@ Specviz
 
 Specviz2d
 ^^^^^^^^^
+
+Bug Fixes
+---------
+
+- Circle tool to create a circular Subset no longer results in an ellipse
+  under certain conditions. [#2332]
+
+- Fixes turning off multiselect mode for a dropdown when no selections are currently made.
+  Previously this resulted in a traceback, but now applies the default selection for
+  single-select mode. [#2404]
+
+- Fixes tracebacks from plugins opened in popout windows. [#2411]
+
+- Fixes app not displaying properly in Notebook 7. [#2420]
+
+Cubeviz
+^^^^^^^
+
+Imviz
+^^^^^
+
+Mosviz
+^^^^^^
+
+- Fixes slit overlay angle in cutout viewer. [#2434]
+
+Specviz
+^^^^^^^
+
+Specviz2d
+^^^^^^^^^
+
+Other Changes and Additions
+---------------------------
+
+- Improved logic for handling active state of plugins. [#2386, #2450]
+
+- API framework for batch aperture photometry. [#2401]
+
+
+3.6.2 (2023-08-25)
+==================
+
+Bug Fixes
+---------
+
+- Explot Plot now throws exception if its "save_figure" method is called
+  with a path that contains invalid directory. [#2339]
+
+- Plugin dropdown elements with multiselect mode enabled will no longer reset
+  the selection when the choices change if any of the previous entries are still
+  valid. [#2344]
+
+- Fixed Plot Options stretch histogram bug that raised an error when a spatial subset
+  was selected in Imviz and Cubeviz. [#2393]
+
+Cubeviz
+^^^^^^^
+
+- Fix laggy behavior with WCS-TAB cubes by always linking by pixel instead of WCS. [#2343]
+
+- Fix matched zoom tool behavior. [#2359]
+
+Imviz
+^^^^^
+
+- Improved ASDF parsing support for non-standard Roman-like data products. [#2351]
+
+Mosviz
+^^^^^^
+
+Specviz
+^^^^^^^
+
+Specviz2d
+^^^^^^^^^
+
+3.6.1 (2023-08-01)
+==================
+
+Bug Fixes
+---------
+
+Imviz
+^^^^^
+
+- Fixes possible extreme lag when opening the Plot Options plugin. [#2326]
+
+- Fixes minor layout issues in the Plot Options plugin. [#2326]
+
+- Fixes compass updating in popout/inline mode. [#2326]
+
+3.6 (2023-07-28)
+================
+
+New Features
+------------
+
+- Introduce jdaviz.open to automatically detect the appropriate config and load data [#2221]
+
+- Add Simplify button to subset plugin to make composite spectral subsets more user
+  friendly. [#2237]
+
+- Plots within plugins can now be popped-out into their own windows. [#2254]
+
+- The ``specviz.load_spectrum`` method is deprecated; use ``specviz.load_data`` instead. [#2273]
+
+- Add launcher to select and identify compatible configurations,
+  and require --layout argument when launching standalone. [#2257, #2267]
+
+- Viewer toolbar items hide themselves when they are not applicable. [#2284]
+
+- Data menu single select will default to the first element. [#2298]
+
+- Line Analysis "Redshift from Centroid" only visible when lines are loaded. [#2294]
+
+- Add lines representing the stretch vmin and vmax to the plot options histogram. [#2301]
+
+- Add option to set bin size in plot options plugin and API call to change histogram
+  viewer limits. [#2309]
+
+
+Cubeviz
+^^^^^^^
+
+- Added the ability to export cube slices to video. User will need to install
+  ``opencv-python`` separately or use ``[all]`` specifier when installing Jdaviz. [#2264]
+
+Imviz
+^^^^^
+
+- Added the ability to load DS9 region files (``.reg``) using the ``IMPORT DATA``
+  button. However, this only works after loading at least one image into Imviz. [#2201]
+
+- Added support for new ``CircularAnnulusROI`` subset from glue, including
+  a new draw tool. [#2201, #2240]
+
+Mosviz
+^^^^^^
+
+- Improved x-axis limit-matching between 2d and 1d spectrum viewers. [#2219]
+
+Specviz
+^^^^^^^
+
+Specviz2d
+^^^^^^^^^
+
+- Re-enable support for displaying the 1d spectrum in wavelength/frequency space, with improved
+  x-axis limit-matching. [#2219]
+
+API Changes
+-----------
+
+- ``viz.app.get_data_from_viewer()`` is deprecated; use ``viz.get_data()``. [#2242]
+
+- ``viz.app.get_subsets_from_viewer()`` is deprecated; use ``viz.app.get_subsets()``. [#2242]
+
+- ``viz.get_data()`` now takes optional ``**kwargs``; e.g., you could pass in
+  ``function="sum"`` to collapse a cube in Cubeviz. [#2242]
+
+- Live-previews and keypress events that depend on the plugin being opened now work for inline
+  and popout windows. [#2295]
+
+Cubeviz
+^^^^^^^
+
+Imviz
+^^^^^
+
+- Simple Aperture Photometry plugin: Custom annulus background options are removed.
+  Please draw/load annulus as you would with other region shapes, then select it
+  in the plugin from Subset dropdown for the background. Using annulus region as
+  aperture is not supported. [#2276, #2287]
+
+Mosviz
+^^^^^^
+
+- Added new ``statistic`` keyword to ``mosviz.get_viewer("spectrum-2d-viewer").data()``
+  to allow user to collapse 2D spectrum to 1D. [#2242]
+
+Specviz
+^^^^^^^
+
+- Re-enabled unit conversion support. [#2127]
+
+Specviz2d
+^^^^^^^^^
+
+Bug Fixes
+---------
+
+- Fixed wrong elliptical region translation in ``app.get_subsets()``. [#2244]
+
+- Fixed ``cls`` input being ignored in ``viz.get_data()``. [#2242]
+
+- Line analysis plugin's ``show_continuum_marks`` is deprecated, use ``plugin.as_active()``
+  instead. [#2295]
+
+Cubeviz
+^^^^^^^
+
+- Moment Map plugin now writes FITS file to working directory if no path provided
+  in standalone mode. [#2264]
+
+- Fixes detection of spatial vs spectral subsets for composite subsets.
+  Also fixes the shadow mark that shows the intersection between spatial and spectral
+  subsets. [#2207, #2266, #2291]
+
+- Prevent Plot Options plugin from hanging when selecting a spectrum viewer in Cubeviz. [#2305]
+
+Imviz
+^^^^^
+
+Mosviz
+^^^^^^
+
+Specviz
+^^^^^^^
+
+- Uncertainties in spectra given to Specviz will now work correctly when non-standard deviation type [#2283]
+
+Specviz2d
+^^^^^^^^^
+
+Other Changes and Additions
+---------------------------
+
+- Gaussian smooth plugin excludes results from the gaussian smooth plugin from the input
+  dataset dropdown. [#2239]
+
+- CLI launchers no longer require data to be specified [#1960]
+
+- Added direct launchers for each config (e.g. ``specviz``) [#1960]
+
+- Replacing existing data from a plugin (e.g., refitting a model with the same label)
+  now preserves the plot options of the data as previously displayed. [#2288]
+
+3.5 (2023-05-25)
+================
+
+New Features
+------------
+
+- Model fitting results are logged in a table within the plugin. [#2093]
+
+- Auto-identify a configuration/helper for a given data file. [#2124]
+
+- Exact-text filtering for metadata plugin. [#2147]
+
+- Update Subset Plugin to utilize ``get_subsets()``. [#2157]
+
+- Histogram showing image values in stretch limits section of plot options plugin. [#2153]
+
+- Vertical (y-range) zoom tool for all spectrum and spectrum-2d viewers.  This also modifies
+  the icon of the horizontal (x-range) tool to be more consistent with the horizontal subset
+  selection tool. [#2206, #2212]
+
+- Allow Subset Plugin to edit composite subsets. [#2182]
+
+- Support for Scatter plots/markers in plot options. [#2193]
+
+Cubeviz
+^^^^^^^
+
+- ``get_data`` now supports ``function=True`` to adopt the collapse-function from the spectrum viewer.
+  [#2117]
+
+- ``get_data`` now supports applying a spectral mask to a collapse spatial subset. [#2199, #2214]
+
+
+Imviz
+^^^^^
+
+- Table exposing past results in the aperture photometry plugin. [#1985, #2015]
+
+- New canvas rotation plugin to rotate displayed image without affecting actual data. [#1983]
+
+- Preliminary support for Roman ASDF data products. This requires
+  ``roman-datamodels`` to be installed separately by the user. [#1822]
+
+- Canvas Rotation plugin is now disabled for non-Chromium based browsers [#2192]
+
+Mosviz
+^^^^^^
+
+- NIRSpec automatic loader now can take a single image as input, instead of requiring
+  the number of cutouts to be the same as the number of 1D spectra. [#2146]
+
+API Changes
+-----------
+
+- Add ``get_subsets()`` method to app level to centralize subset information
+  retrieval. [#2087, #2116, #2138]
+
+Imviz
+^^^^^
+
+- Saving a plot to a PNG (via the astrowidgets API or export plot plugin API) with a provided
+  filename will no longer show the file dialog.  If the given file exists, it is silently
+  overwritten. [#929]
+
+Bug Fixes
+---------
+
+- Fixed a bug where Import Data button crashes under certain condition. [#2110]
+
+Cubeviz
+^^^^^^^
+
+- Fixed get_model_parameters error when retrieving parameters for a cube fit. This
+  also removed the "_3d" previously appended to model labels in the returned dict. [#2171]
+
+Imviz
+^^^^^
+
+- Do not hide previous results in aperture photometry when there is a failure, but rather show
+  the failure message within the plugin UI to indicate the shown results are "out of date". [#2112]
+
+- More efficient parser for Roman data products in Imviz [#2176]
+
+Mosviz
+^^^^^^
+
+- Fixed several data loader bugs for uncommon use cases. [#2146]
+
+Other Changes and Additions
+---------------------------
+
+- move build configuration to ``pyproject.toml`` as defined in PEP621 [#1661]
+
+- drop support for Python 3.8 [#2152]
 
 3.4 (2023-03-22)
 ================
@@ -124,7 +558,7 @@ Bug Fixes
 * Fixed linking issue preventing smoothed spectrum from showing in Specviz2D. [#2023]
 
 * Fixed redshift slider enabling/disabling when calling ``load_line_list``, ``plot_spectral_line``,
-  ``plot_spectral_lines``, or ``erase_spectral_lines``. [#2055] 
+  ``plot_spectral_lines``, or ``erase_spectral_lines``. [#2055]
 
 * Fixed detecting correct type of composite subsets in subset dropdowns in plugins. [#2058]
 
@@ -274,7 +708,7 @@ Imviz
 
 - Subset Tools plugin now allows recentering of editable spatial subset. [#1823]
 
-- Links control plugin shows a confirmation overlay to clear markers when changing linking type. 
+- Links control plugin shows a confirmation overlay to clear markers when changing linking type.
   [#1838]
 
 Mosviz

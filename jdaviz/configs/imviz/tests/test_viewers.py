@@ -22,12 +22,24 @@ def test_create_destroy_viewer(imviz_helper, desired_name, actual_name):
     assert viewer is imviz_helper.app._viewer_store.get(actual_name), list(imviz_helper.app._viewer_store.keys())  # noqa
     assert imviz_helper.app.get_viewer_ids() == viewer_names
 
-    # Make sure plugins that store viewer_items differently are consistent.
-    assert imviz_helper.plugins['Imviz Line Profiles (XY)']._obj.viewer_items == viewer_names
+    # Make sure plugins that store viewer_items are updated.
     assert sorted(imviz_helper.plugins['Compass'].viewer.labels) == viewer_names
+
+    po = imviz_helper.plugins['Plot Options']
+    po.multiselect = True
+    po.viewer = viewer_names
 
     imviz_helper.destroy_viewer(actual_name)
     assert imviz_helper.app.get_viewer_ids() == ['imviz-0']
+    assert po.viewer.selected == ['imviz-0']
+    assert po.viewer.labels == ['imviz-0']
+
+
+def test_get_viewer_created(imviz_helper):
+    # This viewer has no reference but has ID.
+    viewer1 = imviz_helper.create_image_viewer()
+    viewer2 = imviz_helper.app.get_viewer('imviz-1')
+    assert viewer1 is viewer2
 
 
 def test_destroy_viewer_invalid(imviz_helper):

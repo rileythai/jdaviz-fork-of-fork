@@ -14,8 +14,8 @@ from numpy.testing import assert_allclose
 from jdaviz.configs.imviz.tests.utils import BaseImviz_WCS_NoWCS, BaseImviz_WCS_WCS
 
 
-# TODO: Remove skip when https://github.com/bqplot/bqplot/issues/1393 is resolved.
-@pytest.mark.skip(reason="Cannot test due to file dialog popup")
+# TODO: Remove skip when https://github.com/bqplot/bqplot/pull/1397/files#r726500097 is resolved.
+@pytest.mark.skip(reason="Cannot test due to async JS callback")
 class TestSave(BaseImviz_WCS_NoWCS):
 
     def test_save(self, tmpdir):
@@ -23,7 +23,7 @@ class TestSave(BaseImviz_WCS_NoWCS):
         self.viewer.save(filename)
 
         # This only tests that something saved, not the content.
-        assert os.path.isfile(os.path.join(tmpdir.strpath, 'myimage.png'))
+        assert os.path.isfile(f'{filename}.png')
 
 
 class TestCenterOffset(BaseImviz_WCS_NoWCS):
@@ -285,7 +285,7 @@ class TestMarkers(BaseImviz_WCS_NoWCS):
         self.viewer.add_markers(tbl)
         data = self.imviz.app.data_collection[2]
         assert data.label == 'default-marker-name'
-        assert data.style.color == '#ff0000'  # Converted to hex now but still red
+        assert data.style.color in ('red', '#ff0000')
         assert data.style.marker == 'o'
         assert_allclose(data.style.markersize, 5)
         assert_allclose(data.style.alpha, 1)
@@ -307,7 +307,7 @@ class TestMarkers(BaseImviz_WCS_NoWCS):
         self.viewer.add_markers(tbl, use_skycoord=True, marker_name='my_sky')
         data = self.imviz.app.data_collection[3]
         assert data.label == 'my_sky'
-        assert data.style.color == '#00ff00'  # Converted to hex now but still green
+        assert data.style.color in ((0, 1, 0), '#00ff00')
         assert data.style.marker == 'o'
         assert_allclose(data.style.markersize, 3)  # Glue default
         assert_allclose(data.style.alpha, 0.8)
@@ -317,7 +317,7 @@ class TestMarkers(BaseImviz_WCS_NoWCS):
         assert self.viewer.layers[3].state.fill is False
 
         # Make sure the other marker is not changed.
-        assert self.imviz.app.data_collection[2].style.color == '#ff0000'
+        assert self.imviz.app.data_collection[2].style.color in ('red', '#ff0000')
         assert self.viewer.layers[2].state.fill is True
 
         # TODO: How to check imviz.app.data_collection.links is correct?

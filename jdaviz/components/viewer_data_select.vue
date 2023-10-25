@@ -27,7 +27,7 @@
               <j-tooltip :tipid="multi_select ? 'viewer-data-select-enabled' : 'viewer-data-radio-enabled'">
                 <v-btn
                   icon
-                  @click="() => {multi_select = !multi_select}"
+                  @click="toggleMultiSelect"
                   style="opacity: 0.7"
                   >
                     <img :src="multi_select ? icons.checktoradial : icons.radialtocheck" width="24"/>
@@ -93,7 +93,7 @@
 <script>
 
 module.exports = {
-  props: ['data_items', 'viewer', 'layer_icons', 'app_settings', 'viewer_data_visibility', 'icons'],
+  props: ['data_items', 'viewer', 'layer_icons', 'app_settings', 'icons'],
   data: function () {
     var multi_select = true
     if (this.$props.viewer.config === 'cubeviz') {
@@ -168,6 +168,16 @@ module.exports = {
         } else if (this.$props.viewer.reference === 'spectrum-2d-viewer') {
           return (item.ndims === 2 || item.type==='trace') && this.dataItemInViewer(item, returnExtraItems)
         }
+      } else if (this.$props.viewer.config === 'lcviz') {
+        // TODO: generalize itemIsVisible so downstream apps can provide their own customized filters
+        if (item.meta._LCVIZ_EPHEMERIS !== undefined) {
+          if (!this.$props.viewer.reference.startsWith('flux-vs-phase:')) {
+            return false
+          }
+          var viewer_ephem_comp = this.$props.viewer.reference.split('flux-vs-phase:')[1]
+          return item.meta._LCVIZ_EPHEMERIS.ephemeris == viewer_ephem_comp && this.dataItemInViewer(item, returnExtraItems)
+        }
+        return this.dataItemInViewer(item, returnExtraItems)
       }
       // for any situation not covered above, default to showing the entry
       return this.dataItemInViewer(item, returnExtraItems)
@@ -176,11 +186,31 @@ module.exports = {
       // toggle the visibility of the extra items in the menu
       this.showExtraItems = !this.showExtraItems
     },
+    toggleMultiSelect() {
+      this.multi_select = !this.multi_select
+      if (this.multi_select === false){
+        // If we're toggling to single select, set the first item visibility to replace the rest
+        // Find the "first" item
+        for (item_index in this.filteredDataItems){
+          if (this.$props.viewer.selected_data_items[this.filteredDataItems[item_index].id] === 'visible') {
+            this.$emit('data-item-visibility', {
+              id: this.$props.viewer.id,
+              item_id: this.filteredDataItems[item_index].id,
+              visible: true,
+              replace: true})
+            break;
+          }
+        }
+      }
+      
+    },
   },
   computed: {
     viewerTitleCase() {
       var title = this.$props.viewer.reference || this.$props.viewer.id
-      return title.toLowerCase().replaceAll('-', ' ').split(' ').map((word) => {return (word.charAt(0).toUpperCase() + word.slice(1))}).join(' ');
+      // this translates from kebab-case to human readable (individual words, in title case)
+      // each word that should NOT be capitalized needs to explicitly be set here
+      return title.toLowerCase().replaceAll('-', ' ').split(' ').map((word) => {if (['vs'].indexOf(word) !== -1) {return word} else {return word.charAt(0).toUpperCase() + word.slice(1)}}).join(' ');
     },
     showModeToggle() {
       if (this.$props.viewer.config === 'cubeviz') {

@@ -8,7 +8,7 @@ from specutils.utils import QuantityModel
 from traitlets import Bool, List, Unicode, observe
 from glue.core.data import Data
 
-from jdaviz.core.events import SnackbarMessage
+from jdaviz.core.events import SnackbarMessage, GlobalDisplayUnitChanged
 from jdaviz.core.registries import tray_registry
 from jdaviz.core.template_mixin import (PluginTemplateMixin,
                                         SelectPluginComponent,
@@ -17,7 +17,8 @@ from jdaviz.core.template_mixin import (PluginTemplateMixin,
                                         DatasetSelectMixin,
                                         DatasetSpectralSubsetValidMixin,
                                         AutoTextField,
-                                        AddResultsMixin)
+                                        AddResultsMixin,
+                                        TableMixin)
 from jdaviz.core.custom_traitlets import IntHandleEmpty
 from jdaviz.core.user_api import PluginUserApi
 from jdaviz.configs.default.plugins.model_fitting.fitting_backend import fit_model_to_spectrum
@@ -39,7 +40,7 @@ class _EmptyParam:
 @tray_registry('g-model-fitting', label="Model Fitting", viewer_requirements='spectrum')
 class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
                    SpectralSubsetSelectMixin, DatasetSpectralSubsetValidMixin,
-                   AddResultsMixin):
+                   AddResultsMixin, TableMixin):
     """
     See the :ref:`Model Fitting Plugin Documentation <specviz-model-fitting>` for more details.
 
@@ -59,10 +60,12 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
     * :meth:`create_model_component`
     * :meth:`remove_model_component`
     * :meth:`model_components`
+    * :meth:`valid_model_components`
     * :meth:`get_model_component`
     * :meth:`set_model_component`
     * :meth:`reestimate_model_parameters`
     * ``equation`` (:class:`~jdaviz.core.template_mixin.AutoTextField`)
+    * :meth:`equation_components`
     * ``cube_fit``
       Only exposed for Cubeviz.  Whether to fit the model to the cube instead of to the
       collapsed spectrum.
@@ -112,12 +115,6 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._default_spectrum_viewer_reference_name = kwargs.get(
-            "spectrum_viewer_reference_name", "spectrum-viewer"
-        )
-        self._default_flux_viewer_reference_name = kwargs.get(
-            "flux_viewer_reference_name", "flux-viewer"
-        )
         self._units = {}
         self._fitted_model = None
         self._fitted_spectrum = None
@@ -129,7 +126,7 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
                                                'spatial_subset_items',
                                                'spatial_subset_selected',
                                                default_text='Entire Cube',
-                                               allowed_type='spatial')
+                                               filters=['is_spatial'])
         else:
             self.spatial_subset = None
 
@@ -154,8 +151,33 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         self.residuals = AutoTextField(self, 'residuals_label', 'residuals_label_default',
                                        'residuals_label_auto', 'residuals_label_invalid_msg')
 
+        headers = ['model', 'data_label', 'spectral_subset', 'equation']
+        if self.config == 'cubeviz':
+            headers += ['spatial_subset', 'cube_fit']
+
+        self.table.headers_avail = headers
+        self.table.headers_visible = headers
+        # when model parameters are added as columns, only show the value columns by default
+        # (other columns can be show in the dropdown by the user)
+        self.table._new_col_visible = lambda colname: colname.split(':')[-1] not in ('unit', 'fixed', 'uncert', 'std')  # noqa
+
         # set the filter on the viewer options
         self._update_viewer_filters()
+
+        self.hub.subscribe(self, GlobalDisplayUnitChanged,
+                           handler=self._on_global_display_unit_changed)
+
+    @property
+    def _default_spectrum_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_spectrum_viewer_reference_name', 'spectrum-viewer'
+        )
+
+    @property
+    def _default_flux_viewer_reference_name(self):
+        return getattr(
+            self.app._jdaviz_helper, '_default_flux_viewer_reference_name', 'flux-viewer'
+        )
 
     @property
     def user_api(self):
@@ -163,12 +185,14 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         if self.config == "cubeviz":
             expose += ['spatial_subset']
         expose += ['spectral_subset', 'model_component', 'poly_order', 'model_component_label',
-                   'model_components', 'create_model_component', 'remove_model_component',
+                   'model_components', 'valid_model_components',
+                   'create_model_component', 'remove_model_component',
                    'get_model_component', 'set_model_component', 'reestimate_model_parameters',
-                   'equation', 'add_results', 'residuals_calculate', 'residuals']
+                   'equation', 'equation_components',
+                   'add_results', 'residuals_calculate', 'residuals']
         if self.config == "cubeviz":
             expose += ['cube_fit']
-        expose += ['calculate_fit']
+        expose += ['calculate_fit', 'clear_table', 'export_table']
         return PluginUserApi(self, expose=expose)
 
     def _param_units(self, param, model_type=None):
@@ -223,10 +247,7 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
 
             m["parameters"] = temp_params
 
-        # Trick traitlets into updating the displayed values
-        component_models = self.component_models
-        self.component_models = []
-        self.component_models = component_models
+        self.send_state('component_models')
 
     def _update_parameters_from_QM(self):
         """
@@ -265,10 +286,7 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
                 temp_params += temp_param
             m["parameters"] = temp_params
 
-        # Trick traitlets into updating the displayed values
-        component_models = self.component_models
-        self.component_models = []
-        self.component_models = component_models
+        self.send_state('component_models')
 
     def _update_initialized_parameters(self):
         # If the user changes a parameter value, we need to change it in the
@@ -323,6 +341,7 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         # (won't affect calculations because these locations are masked)
         selected_spec.flux[np.isnan(selected_spec.flux)] = 0.0
 
+        # TODO: can we simplify this logic?
         self._units["x"] = str(
             selected_spec.spectral_axis.unit)
         self._units["y"] = str(
@@ -490,7 +509,37 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         self._initialized_models[comp_label] = initialized_model
 
         new_model["Initialized"] = True
+        new_model["initialized_display_units"] = self._units.copy()
+
+        new_model["compat_display_units"] = True  # always compatible at time of creation
         return new_model
+
+    def _check_model_component_compat(self, axes=['x', 'y'], display_units=None):
+        if display_units is None:
+            display_units = [u.Unit(self._units[ax]) for ax in axes]
+
+        disp_physical_types = [unit.physical_type for unit in display_units]
+
+        for model_index, comp_model in enumerate(self.component_models):
+            compat = True
+            for ax, ax_physical_type in zip(axes, disp_physical_types):
+                comp_unit = u.Unit(comp_model["initialized_display_units"][ax])
+                compat = comp_unit.physical_type == ax_physical_type
+                if not compat:
+                    break
+            self.component_models[model_index]["compat_display_units"] = compat
+
+        # length hasn't changed, so we need to force the traitlet to update
+        self.send_state("component_models")
+        self._check_model_equation_invalid()
+
+    def _on_global_display_unit_changed(self, msg):
+        axis = {'spectral': 'x', 'flux': 'y'}.get(msg.axis)
+
+        # update internal tracking of current units
+        self._units[axis] = str(msg.unit)
+
+        self._check_model_component_compat([axis], [msg.unit])
 
     def remove_model_component(self, model_component_label):
         """
@@ -531,6 +580,7 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         comp = {"model_type": model_component['model_type'],
                 "parameters": {p['name']: {'value': p['value'],
                                            'unit': p['unit'],
+                                           'std': p.get('std', np.nan),
                                            'fixed': p['fixed']} for p in model_component['parameters']}}  # noqa
 
         if parameter is not None:
@@ -620,6 +670,9 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         # length hasn't changed, so we need to force the traitlet to update
         self.send_state("component_models")
 
+        # model units may have changed, need to re-check their compatibility with display units
+        self._check_model_component_compat()
+
         # return user-friendly info on revised model
         return self.get_model_component(model_component_label)
 
@@ -630,6 +683,20 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         """
         return [x["id"] for x in self.component_models]
 
+    @property
+    def valid_model_components(self):
+        """
+        List of the labels of existing valid (due to display units) model components
+        """
+        return [x["id"] for x in self.component_models if x["compat_display_units"]]
+
+    @property
+    def equation_components(self):
+        """
+        List of the labels of model components in the current equation
+        """
+        return re.split(r'[+*/-]', self.equation.value.replace(' ', ''))
+
     def vue_add_model(self, event):
         self.create_model_component()
 
@@ -637,10 +704,41 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         self.remove_model_component(event)
 
     @observe('model_equation')
-    def _model_equation_changed(self, event):
+    def _check_model_equation_invalid(self, event=None):
         # Length is a dummy check to test the infrastructure
         if len(self.model_equation) == 0:
-            self.model_equation_invalid_msg = 'model equation is required'
+            self.model_equation_invalid_msg = 'model equation is required.'
+            return
+        if '' in self.equation_components:
+            # includes an operator without a variable (ex: 'C+')
+            self.model_equation_invalid_msg = 'incomplete equation.'
+            return
+
+        components_not_existing = [comp for comp in self.equation_components
+                                   if comp not in self.model_components]
+        if len(components_not_existing):
+            if len(components_not_existing) == 1:
+                msg = "is not an existing model component."
+            else:
+                msg = "are not existing model components."
+            self.model_equation_invalid_msg = f'{", ".join(components_not_existing)} {msg}'
+            return
+        components_not_valid = [comp for comp in self.equation_components
+                                if comp not in self.valid_model_components]
+        if len(components_not_valid):
+            if len(components_not_valid) == 1:
+                msg = ("is currently disabled because it has"
+                       " incompatible units with the current display units."
+                       " Remove the component from the equation,"
+                       " re-estimate its free parameters to use the new units"
+                       " or revert the display units.")
+            else:
+                msg = ("are currently disabled because they have"
+                       " incompatible units with the current display units."
+                       " Remove the components from the equation,"
+                       " re-estimate their free parameters to use the new units"
+                       " or revert the display units.")
+            self.model_equation_invalid_msg = f'{", ".join(components_not_valid)} {msg}'
             return
         self.model_equation_invalid_msg = ''
 
@@ -686,11 +784,43 @@ class ModelFitting(PluginTemplateMixin, DatasetSelectMixin,
         if not self.spectral_subset_valid:
             valid, spec_range, subset_range = self._check_dataset_spectral_subset_valid(return_ranges=True)  # noqa
             raise ValueError(f"spectral subset '{self.spectral_subset.selected}' {subset_range} is outside data range of '{self.dataset.selected}' {spec_range}")  # noqa
+        if len(self.model_equation_invalid_msg):
+            raise ValueError(f"model equation is invalid: {self.model_equation_invalid_msg}")
 
         if self.cube_fit:
-            return self._fit_model_to_cube(add_data=add_data)
+            ret = self._fit_model_to_cube(add_data=add_data)
         else:
-            return self._fit_model_to_spectrum(add_data=add_data)
+            ret = self._fit_model_to_spectrum(add_data=add_data)
+
+        if ret is None:  # pragma: no cover
+            # something went wrong in the fitting call and (hopefully) already raised a warning,
+            # but we don't have anything to add to the table
+            return ret
+
+        if self.cube_fit:
+            # cube fits are currently unsupported in tables
+            return ret
+
+        row = {'model': self.results_label if add_data else '',
+               'data_label': self.dataset_selected,
+               'spectral_subset': self.spectral_subset_selected,
+               'equation': self.equation.value}
+        if self.app.config == 'cubeviz':
+            row['spatial_subset'] = self.spatial_subset_selected
+            row['cube_fit'] = self.cube_fit
+
+        equation_components = self.equation_components
+        for comp_ind, comp in enumerate(equation_components):
+            for param_name, param_dict in self.get_model_component(comp).get('parameters', {}).items():  # noqa
+                colprefix = f"{comp}:{param_name}_{comp_ind}"
+                row[colprefix] = param_dict.get('value')
+                row[f"{colprefix}:unit"] = param_dict.get('unit')
+                row[f"{colprefix}:fixed"] = param_dict.get('fixed')
+                row[f"{colprefix}:std"] = param_dict.get('std')
+
+        self.table.add_item(row)
+
+        return ret
 
     def vue_apply(self, event):
         self.calculate_fit()

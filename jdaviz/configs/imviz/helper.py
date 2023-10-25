@@ -88,6 +88,8 @@ class Imviz(ImageConfigHelper):
             * ``'filename.png'`` (requires ``scikit-image``; grayscale only)
             * JWST ASDF-in-FITS file (requires ``stdatamodels`` and ``gwcs``; ``data`` or given
               ``ext`` + GWCS)
+            * Roman ASDF file or `roman_datamodels.datamodels.ImageModel`
+              (requires ``roman-datamodels``)
             * `~astropy.io.fits.HDUList` object (first image extension found
               is loaded unless ``ext`` keyword is also given)
             * `~astropy.io.fits.ImageHDU` object
@@ -213,6 +215,48 @@ class Imviz(ImageConfigHelper):
         """
         link_image_data(self.app, **kwargs)
 
+    def get_link_type(self, data_label_1, data_label_2):
+        """Find the type of ``glue`` linking between the given
+        data labels. A link is bi-directional. If there are
+        more than 2 data in the collection, one of the given
+        labels should be the reference data or look-up will fail.
+
+        Parameters
+        ----------
+        data_label_1, data_label_2 : str
+           Labels for the data linked together.
+
+        Returns
+        -------
+        link_type : {'pixels', 'wcs', 'self'}
+            One of the link types accepted by :func:`~jdaviz.configs.imviz.helper.link_image_data`
+            or ``'self'`` if the labels are identical.
+
+        Raises
+        ------
+        ValueError
+            Link look-up failed.
+
+        """
+        if data_label_1 == data_label_2:
+            return "self"
+
+        link_type = None
+        for elink in self.app.data_collection.external_links:
+            elink_labels = (elink.data1.label, elink.data2.label)
+            if data_label_1 in elink_labels and data_label_2 in elink_labels:
+                if isinstance(elink, LinkSame):  # Assumes WCS link never uses LinkSame
+                    link_type = 'pixels'
+                else:  # If not pixels, must be WCS
+                    link_type = 'wcs'
+                break  # Might have duplicate, just grab first match
+
+        if link_type is None:
+            raise ValueError(f'{data_label_1} and {data_label_2} combo not found '
+                             'in data collection external links')
+
+        return link_type
+
     def get_aperture_photometry_results(self):
         """Return aperture photometry results, if any.
         Results are calculated using :ref:`aper-phot-simple` plugin.
@@ -236,6 +280,28 @@ class Imviz(ImageConfigHelper):
 
         """
         return getattr(self.app, '_catalog_source_table', None)
+
+    def get_data(self, data_label=None, spatial_subset=None, cls=None):
+        """
+        Returns data with name equal to data_label of type cls with subsets applied from
+        spatial_subset.
+
+        Parameters
+        ----------
+        data_label : str, optional
+            Provide a label to retrieve a specific data set from data_collection.
+        spatial_subset : str, optional
+            Spatial subset applied to data.
+        cls : `~specutils.Spectrum1D`, `~astropy.nddata.CCDData`, optional
+            The type that data will be returned as.
+
+        Returns
+        -------
+        data : cls
+            Data is returned as type cls with subsets applied.
+
+        """
+        return self._get_data(data_label=data_label, spatial_subset=spatial_subset, cls=cls)
 
 
 def split_filename_with_fits_ext(filename):

@@ -1,14 +1,31 @@
 <template>
   <j-tray-plugin
     description='Tools for selecting and interacting with subsets.'
-    :link="'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#subset-tools'"
+    :link="docs_link || 'https://jdaviz.readthedocs.io/en/'+vdocs+'/'+config+'/plugins.html#subset-tools'"
     :popout_button="popout_button">
+
+    <v-row v-if="config === 'imviz'">
+      <div style="width: calc(100% - 32px)">
+      </div>
+      <div style="width: 32px">
+        <j-tooltip tooltipcontent="Multiselect for recentering subsets">
+          <v-btn
+            icon
+            style="opacity: 0.7"
+            @click="() => {multiselect = !multiselect}"
+          >
+            <img :src="multiselect ? icon_checktoradial : icon_radialtocheck" width="24" class="invert-if-dark"/>
+          </v-btn>
+        </j-tooltip>
+      </div>
+    </v-row>
 
     <v-row align=center>
       <v-col cols=10 justify="left">
         <plugin-subset-select 
           :items="subset_items"
           :selected.sync="subset_selected"
+          :multiselect="multiselect"
           :show_if_single_entry="true"
           label="Subset"
           hint="Select subset to edit."
@@ -23,7 +40,7 @@
     </v-row>
 
     <!-- Sub-plugin for recentering of spatial subset (Imviz only) -->
-    <v-row v-if="config=='imviz' && is_editable">
+    <v-row v-if="config=='imviz' && is_centerable">
       <v-expansion-panels accordion v-model="subplugins_opened">
         <v-expansion-panel>
           <v-expansion-panel-header >
@@ -45,44 +62,64 @@
       </v-expansion-panels>
     </v-row>
 
-    <!-- Composite region cannot be edited, so just grab first element. -->
-    <div v-if="is_editable">
-      <v-row v-for="(item, index2) in subset_definitions[0]"
-       class="pt-0 pb-0 mt-0 mb-0">
-        <v-text-field
+    <!-- Show all subregions of a subset, including Glue state and subset type. -->
+    <div v-for="(region, index) in subset_definitions">
+       <j-plugin-section-header style="margin: 0px; margin-left: -12px; text-align: left; font-size: larger; font-weight: bold">
+       Subregion {{ index }}</j-plugin-section-header>
+       <v-row class="row-no-outside-padding">
+        <div style="margin-top: 4px">
+            {{ subset_types[index] }} applied with
+        </div>
+        <div style="margin-top: -2px; padding-bottom: 8px">
+            <div v-if="index === 0">
+              <img :src="icon_replace" width="20"/>
+              replace mode
+            </div>
+            <div v-else-if="glue_state_types[index] === 'AndState'">
+              <img :src="icon_and" width="20"/>
+              and mode
+            </div>
+            <div v-else-if="glue_state_types[index] === 'OrState'">
+              <img :src="icon_or" width="20"/>
+              add mode
+            </div>
+            <div v-else-if="glue_state_types[index] === 'AndNotState'">
+              <img :src="icon_andnot" width="20"/>
+              remove mode
+            </div>
+            <div v-else-if="glue_state_types[index] === 'XorState'">
+              <img :src="icon_xor" width="20"/>
+              xor mode
+            </div>
+        </div>
+      </v-row>
+
+      <v-row v-for="(item, index2) in region" class="row-no-outside-padding">
+        <v-text-field v-if="item.name === 'Parent' || item.name === 'Masked values'"
+          :label="item.name"
+          :value="item.value"
+          style="padding-top: 0px; margin-top: 0px"
+          :readonly="true"
+          :hint="item.name === 'Parent' ? 'Subset was defined with respect to this reference data (read-only)' : 'Number of elements included by mask'"
+        ></v-text-field>
+        <v-text-field v-if="item.name !== 'Parent' && item.name !== 'Masked values'"
           :label="item.name"
           v-model.number="item.value"
           type="number"
+          style="padding-top: 0px; margin-top: 0px"
+          :suffix="item.unit ? item.unit.replace('Angstrom', 'A') : ''"
         ></v-text-field>
       </v-row>
+    </div>
 
-      <v-row justify="end" no-gutters>
+      <v-row v-if="!multiselect" justify="end" no-gutters>
+        <j-tooltip v-if="can_freeze" tooltipcontent="Freeze subset to a mask on the underlying data entries">
+          <v-btn color="primary" text @click="freeze_subset">Freeze</v-btn>
+        </j-tooltip>
+        <j-tooltip tooltipcontent="Convert composite subset to use only add mode to connect subregions">
+          <v-btn :disabled="!can_simplify" color="primary" text @click="simplify_subset">Simplify</v-btn>
+        </j-tooltip>
         <v-btn color="primary" text @click="update_subset">Update</v-btn>
       </v-row>
-    </div>
-
-    <div v-if="show_region_info">
-      <j-plugin-section-header>Subset Region Definition</j-plugin-section-header>
-      <div v-if="subset_definitions.length">
-        <v-row v-for="(subset_definition, index) in subset_definitions" no-gutters>
-          <v-col>
-            <v-row class="pt-0 pb-0 mt-0 mb-0">
-              <v-col>Subset type:</v-col>
-              <v-col>{{ subset_types[index] }}</v-col>
-            </v-row>
-            <v-row v-for="(item, index2) in subset_definition"
-             class="pt-0 pb-0 mt-0 mb-0" no-gutters>
-              <v-col>{{ item.name }}:</v-col>
-              <v-col>
-                <j-number-uncertainty
-                  :value="item.orig"
-                  :defaultDigs="6"
-                ></j-number-uncertainty>
-              </v-col>
-            </v-row>
-          </v-col>
-        </v-row>
-      </div>
-    </div>
   </j-tray-plugin>
 </template>

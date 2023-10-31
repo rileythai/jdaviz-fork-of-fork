@@ -53,6 +53,7 @@ from jdaviz.core.events import (LoadDataMessage, NewViewerMessage, AddDataMessag
                                 AddDataToViewerMessage, RemoveDataFromViewerMessage,
                                 ViewerAddedMessage, ViewerRemovedMessage,
                                 ViewerRenamedMessage)
+from jdaviz.core.jdaviz_logger import method_logger
 from jdaviz.core.style_widget import StyleWidget
 from jdaviz.core.registries import (tool_registry, tray_registry, viewer_registry,
                                     data_parser_registry)
@@ -70,7 +71,6 @@ EXT_TYPES = dict(flux=['flux', 'sci'],
                  uncert=['ivar', 'err', 'var', 'uncert'],
                  mask=['mask', 'dq'])
 ALL_JDAVIZ_CONFIGS = ['cubeviz', 'specviz', 'specviz2d', 'mosviz', 'imviz']
-
 
 @unit_converter('custom-jdaviz')
 class UnitConverterWithSpectral:
@@ -583,6 +583,7 @@ class Application(VuetifyTemplate, HubListener):
 
         dc.add_link(links)
 
+    @method_logger
     def load_data(self, file_obj, parser_reference=None, **kwargs):
         """
         Provided a path to a data file, open and parse the data into the
@@ -647,6 +648,7 @@ class Application(VuetifyTemplate, HubListener):
         finally:
             self.loading = False
 
+    @method_logger
     def get_viewer(self, viewer_reference):
         """
         Return a `~glue_jupyter.bqplot.common.BqplotBaseView` viewer instance.
@@ -673,6 +675,7 @@ class Application(VuetifyTemplate, HubListener):
         """
         return self._viewer_by_reference(viewer_reference, fallback_to_id=True)
 
+    @method_logger
     def get_viewer_by_id(self, vid):
         """Like :meth:`get_viewer` but use ID directly instead of reference name.
         This is useful when reference name is `None`.
@@ -1987,6 +1990,7 @@ class Application(VuetifyTemplate, HubListener):
                 subset_message = SubsetUpdateMessage(sender=subset)
                 self.hub.broadcast(subset_message)
 
+    @method_logger
     def vue_destroy_viewer_item(self, cid):
         """
         Callback for when viewer area tabs are destroyed. Finds the viewer item
@@ -2021,6 +2025,7 @@ class Application(VuetifyTemplate, HubListener):
 
         self.hub.broadcast(ViewerRemovedMessage(cid, sender=self))
 
+    @method_logger
     def vue_data_item_unload(self, event):
         """
         Callback for selection events in the front-end data list when clicking to unload an entry
@@ -2029,6 +2034,7 @@ class Application(VuetifyTemplate, HubListener):
         data_label = self._get_data_item_by_id(event['item_id'])['name']
         self.remove_data_from_viewer(event['id'], data_label)
 
+    @method_logger
     def vue_data_item_visibility(self, event):
         self.set_data_visibility(event['id'],
                                  self._get_data_item_by_id(event['item_id'])['name'],
@@ -2117,6 +2123,7 @@ class Application(VuetifyTemplate, HubListener):
             if self.config == 'imviz':
                 viewer.on_limits_change()  # Trigger compass redraw
 
+    @method_logger
     def vue_data_item_remove(self, event):
 
         data_label = event['item_name']
@@ -2162,6 +2169,7 @@ class Application(VuetifyTemplate, HubListener):
         """
         self.state.snackbar_queue.close_current_message(self.state)
 
+    @method_logger
     def vue_call_viewer_method(self, event):
         viewer_id, method = event['id'], event['method']
         args = event.get('args', [])

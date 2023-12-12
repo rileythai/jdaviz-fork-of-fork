@@ -1631,8 +1631,7 @@ class SubsetSelect(SelectPluginComponent):
         all_subsets = [self._subset_to_dict(s) for s in
                        self.app.data_collection.subset_groups]
         self.items = self.manual_items + [s for s in all_subsets
-                                          if self._allowed_type is None
-                                          or s['type'] == self._allowed_type]
+                                          if self._is_valid_item(s)]
 
     @staticmethod
     def _subset_type(subset):
@@ -1688,8 +1687,8 @@ class SubsetSelect(SelectPluginComponent):
         return super()._is_valid_item(subset, locals())
 
     def _update_subset(self, subset, attribute=None):
-        if self._allowed_type is not None and self._subset_type(subset) != self._allowed_type:
-            # the subset that was changed is not of the allowed type (spectral, spatial)
+        if not self._is_valid_item(subset):
+            # the subset that was changed does not match the current filter
             return
 
         if attribute == 'label':
@@ -1771,6 +1770,8 @@ class SubsetSelect(SelectPluginComponent):
                 return subset_group
 
     def rename_selected(self, new_name):
+        if self.selected == 'Create New':
+            raise ValueError("must select an existing subset to rename")
         if new_name in self.labels:
             raise ValueError(f"{new_name} is already a named subset")
         if new_name in ['Entire Spectrum', 'Surrounding']:

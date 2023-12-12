@@ -1632,6 +1632,11 @@ class SubsetSelect(SelectPluginComponent):
                        self.app.data_collection.subset_groups]
         self.items = self.manual_items + [s for s in all_subsets
                                           if self._is_valid_item(s)]
+        if hasattr(self.plugin, "_plugin_name"):
+            if self.plugin._plugin_name == "Line Analysis":
+                print("Resetting items")
+                print(f"All subsets: {all_subsets}")
+                print(f"Valid items: {self.items}")
 
     @staticmethod
     def _subset_type(subset):
@@ -1691,7 +1696,12 @@ class SubsetSelect(SelectPluginComponent):
             # the subset that was changed does not match the current filter
             return
 
+        if self.plugin._plugin_name == "Line Analysis":
+            print(f"Got UpdateSubset message: {subset} {attribute}")
+
         if attribute == 'label':
+            if self.plugin._plugin_name == "Line Analysis":
+                print("Attribute is label")
             selected = self.selected
             # then rebuild the whole items list
             self._reset_items()
@@ -1705,6 +1715,11 @@ class SubsetSelect(SelectPluginComponent):
             # NOTE: this logic will need to be revisited if generic renaming of subsets is added
             # see https://github.com/spacetelescope/jdaviz/pull/1175#discussion_r829372470
             dc_subset_labels = [sg.label for sg in self.app.data_collection.subset_groups]
+            print("Got to checking valid item")
+            if subset.label not in dc_subset_labels:
+                print("Not in dc_subset_labels")
+            elif not self._is_valid_item(subset):
+                print("Not a valid item")
             if subset.label in dc_subset_labels and self._is_valid_item(subset):
                 # NOTE: += will not trigger traitlet update
                 self.items = self.items + [self._subset_to_dict(subset)]  # noqa
@@ -1784,6 +1799,7 @@ class SubsetSelect(SelectPluginComponent):
             raise TypeError("current selection is not a subset")
 
         # this will trigger the SubsetUpdateMessage
+        print(f"Renaming {subset_group.label} to {new_name}")
         subset_group.label = new_name
 
     @cached_property

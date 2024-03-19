@@ -24,7 +24,8 @@ EXT_TYPES = dict(flux=['flux', 'sci', 'data'],
 
 @data_parser_registry("cubeviz-data-parser")
 def parse_data(app, file_obj, data_type=None, data_label=None,
-               parent=None, cache=None, local_path=None, timeout=None):
+               parent=None, cache=None, local_path=None, timeout=None,
+               specutils_format=None):
     """
     Attempts to parse a data file and auto-populate available viewers in
     cubeviz.
@@ -52,6 +53,11 @@ def parse_data(app, file_obj, data_type=None, data_label=None,
         remote requests in seconds (passed to
         `~astropy.utils.data.download_file` or
         `~astroquery.mast.Conf.timeout`).
+    specutils_format : str, optional
+        Optional format string to pass to Spectrum1D.read(), see
+        https://specutils.readthedocs.io/en/stable/spectrum1d.html#list-of-loaders
+        for valid format strings. Useful for processed files that may not include
+        the original headers with information used to auto-identify.
     """
 
     flux_viewer_reference_name = app._jdaviz_helper._default_flux_viewer_reference_name
@@ -84,6 +90,17 @@ def parse_data(app, file_obj, data_type=None, data_label=None,
         file_obj = download_uri_to_path(
             file_obj, cache=cache, local_path=local_path, timeout=timeout
         )
+
+        if specutils_format is not None:
+            sc = Spectrum1D.read(file_obj, format=specutils_format)
+            _parse_spectrum1d_3d(
+                app, sc, data_label=data_label,
+                flux_viewer_reference_name=flux_viewer_reference_name,
+                spectrum_viewer_reference_name=spectrum_viewer_reference_name,
+                uncert_viewer_reference_name=uncert_viewer_reference_name
+            )
+            app.get_tray_item_from_name("Spectral Extraction").disabled_msg = ""
+            return
 
         file_name = os.path.basename(file_obj)
 

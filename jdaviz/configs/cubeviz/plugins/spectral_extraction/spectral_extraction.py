@@ -8,6 +8,7 @@ from astropy.nddata import (
 )
 from functools import cached_property
 from traitlets import Any, Bool, Dict, Float, List, Unicode, observe
+from specutils import Spectrum
 
 from jdaviz.core.custom_traitlets import FloatHandleEmpty
 from jdaviz.core.events import SnackbarMessage, SliceValueUpdatedMessage
@@ -431,7 +432,7 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
                 axis=spatial_axes, **kwargs
             )  # returns an NDDataArray
 
-        # Convert to Spectrum1D, with the spectral axis in correct units:
+        # Convert to Spectrum, with the spectral axis in correct units:
         if hasattr(spectral_cube.coords, 'spectral_wcs'):
             target_wave_unit = spectral_cube.coords.spectral_wcs.world_axis_units[0]
         else:

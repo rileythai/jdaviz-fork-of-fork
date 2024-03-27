@@ -8,7 +8,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from glue.core.roi import XRangeROI
 from regions import PixCoord, CirclePixelRegion, CircleSkyRegion, EllipsePixelRegion
-from specutils import Spectrum1D
+from specutils import Spectrum
 
 from jdaviz.configs.imviz.tests.test_regions import BaseRegionHandler
 
@@ -74,4 +74,4 @@ class TestLoadRegions(BaseRegionHandler):
                                                  'Spectrum (sum) (Subset 2)',
                                                  'Spectrum (Subset 1, sum) (Subset 2)']
         for sp in spectral_subsets.values():
-            assert isinstance(sp, Spectrum1D)
+            assert isinstance(sp, Spectrum)

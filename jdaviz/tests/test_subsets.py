@@ -9,7 +9,7 @@ from glue.core.edit_subset_mode import AndMode, AndNotMode, OrMode, XorMode
 from regions import (PixCoord, CirclePixelRegion, CircleSkyRegion, RectanglePixelRegion,
                      EllipsePixelRegion, CircleAnnulusPixelRegion)
 from numpy.testing import assert_allclose
-from specutils import SpectralRegion, Spectrum1D
+from specutils import SpectralRegion, Spectrum
 from astropy.nddata import NDData
 
 from jdaviz.utils import get_subset_type, MultiMaskSubsetState
@@ -150,7 +150,7 @@ def test_region_from_subset_3d(cubeviz_helper):
 
 
 def test_region_from_subset_profile(cubeviz_helper, spectral_cube_wcs):
-    data = Spectrum1D(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
+    data = Spectrum(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
     subset_plugin = cubeviz_helper.app.get_tray_item_from_name('g-subset-plugin')
 
     cubeviz_helper.load_data(data, data_label='Test 1D Flux')
@@ -198,7 +198,7 @@ def test_region_from_subset_profile(cubeviz_helper, spectral_cube_wcs):
 
 def test_disjoint_spectral_subset(cubeviz_helper, spectral_cube_wcs):
     subset_plugin = cubeviz_helper.app.get_tray_item_from_name('g-subset-plugin')
-    data = Spectrum1D(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
+    data = Spectrum(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
     cubeviz_helper.load_data(data, data_label="Test Flux")
 
     spec_viewer = cubeviz_helper.app.get_viewer("spectrum-viewer")
@@ -717,7 +717,7 @@ def test_delete_subsets(cubeviz_helper, spectral_cube_wcs):
     """
     Test that the toolbar selections get reset when the subset being actively edited gets deleted.
     """
-    data = Spectrum1D(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
+    data = Spectrum(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
     cubeviz_helper.load_data(data, data_label="Test Flux")
     dc = cubeviz_helper.app.data_collection
 
@@ -746,7 +746,7 @@ class TestRegionsFromSubsets:
 
         """ Basic tests for retrieving Sky Regions from spatial subsets in Cubeviz.
         """
-        data = Spectrum1D(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
+        data = Spectrum(flux=np.ones((128, 128, 256)) * u.nJy, wcs=spectral_cube_wcs)
         cubeviz_helper.load_data(data)
 
         # basic test, a single circular region

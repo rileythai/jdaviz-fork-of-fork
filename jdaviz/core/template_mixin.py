@@ -32,7 +32,7 @@ from glue_jupyter.registries import viewer_registry
 from glue_jupyter.widgets.linked_dropdown import get_choices as _get_glue_choices
 from photutils.aperture import CircularAperture, EllipticalAperture, RectangularAperture
 from regions import PixelRegion
-from specutils import Spectrum1D
+from specutils import Spectrum
 from specutils.manipulation import extract_region
 from traitlets import Any, Bool, Dict, Float, HasTraits, List, Unicode, observe
 
@@ -2052,8 +2052,8 @@ class SubsetSelect(SelectPluginComponent):
         """
         if self.is_multiselect:  # pragma: no cover
             raise TypeError("This action cannot be done when multiselect is active")
-        if not isinstance(dataset, Spectrum1D):  # pragma: no cover
-            raise TypeError("dataset must be a Spectrum1D object")
+        if not isinstance(dataset, Spectrum):  # pragma: no cover
+            raise TypeError("dataset must be a Spectrum object")
 
         if self.selected_obj is None:
             return np.nanmin(dataset.spectral_axis), np.nanmax(dataset.spectral_axis)
@@ -3385,7 +3385,7 @@ class DatasetSelect(SelectPluginComponent):
             return NDData
         if 'is_trace' in self.filters:
             return None
-        return Spectrum1D
+        return Spectrum
 
     def _get_dc_item(self, selected):
         if selected not in self.labels:

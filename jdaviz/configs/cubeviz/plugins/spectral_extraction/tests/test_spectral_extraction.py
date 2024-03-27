@@ -11,7 +11,7 @@ from glue.core.edit_subset_mode import ReplaceMode, AndNotMode, NewMode
 from numpy.testing import assert_allclose, assert_array_equal
 from regions import (CirclePixelRegion, CircleAnnulusPixelRegion, EllipsePixelRegion,
                      RectanglePixelRegion, PixCoord)
-from specutils import Spectrum1D
+from specutils import Spectrum
 
 
 def test_version_after_nddata_update(cubeviz_helper, spectrum1d_cube_with_uncerts):
@@ -34,7 +34,7 @@ def test_version_after_nddata_update(cubeviz_helper, spectrum1d_cube_with_uncert
 
     assert plg._obj.disabled_msg == ''
     assert isinstance(spectral_cube, NDDataArray)
-    assert isinstance(collapsed_cube_s1d, Spectrum1D)
+    assert isinstance(collapsed_cube_s1d, Spectrum)
 
     assert_allclose(
         collapsed_cube_nddata.data,
@@ -160,7 +160,7 @@ def test_save_collapsed_to_fits(cubeviz_helper, spectrum1d_cube_with_uncerts, tm
     assert fname_path.is_file()
 
     # read file back in, make sure it matches
-    dat = Spectrum1D.read(fname_path)
+    dat = Spectrum.read(fname_path)
     assert_array_equal(dat.data, extract_plugin._obj.extracted_spec.data)
     assert dat.unit == extract_plugin._obj.extracted_spec.unit
 
@@ -379,7 +379,7 @@ def test_cone_and_cylinder_errors(cubeviz_helper, spectrum1d_cube_largest):
 
 
 def test_cone_aperture_with_frequency_units(cubeviz_helper, spectral_cube_wcs):
-    data = Spectrum1D(flux=np.ones((128, 129, 256)) * u.nJy, wcs=spectral_cube_wcs)
+    data = Spectrum(flux=np.ones((128, 129, 256)) * u.nJy, wcs=spectral_cube_wcs)
     cubeviz_helper.load_data(data, data_label="Test Flux")
     cubeviz_helper.load_regions([CirclePixelRegion(PixCoord(14, 15), radius=2.5)])
 

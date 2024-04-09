@@ -133,6 +133,8 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
         self.aperture._initialize_choices()
         self.aperture.select_default()
 
+        self.spectral_axis_index = 0
+
         self.background = ApertureSubsetSelect(self,
                                                'bg_items',
                                                'bg_selected',
@@ -391,6 +393,8 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
             flux = nddata.data << nddata.unit
             mask = nddata.mask
         # Use the spectral coordinate from the WCS:
+        pass_spectral_axis = False
+        spectral_axis = None
         if '_orig_spec' in spectral_cube.meta:
             wcs = spectral_cube.meta['_orig_spec'].wcs.spectral
         elif hasattr(spectral_cube.coords, 'spectral'):
@@ -409,10 +413,10 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
         # by default we want to propagate uncertainties:
         kwargs.setdefault("propagate_uncertainties", True)
 
-        # Collapse an e.g. 3D spectral cube to 1D spectrum, assuming that last axis
-        # is always wavelength. This may need adjustment after the following
-        # specutils PR is merged: https://github.com/astropy/specutils/pull/1033
-        spatial_axes = (0, 1)
+        # Collapse a 3D spectral cube to 1D spectrum.
+        spatial_axes = [0, 1, 2]
+        spatial_axes.remove(self.spectral_axis_index)
+        spatial_axes = tuple(spatial_axes)
         if selected_func == 'mean':
             # Use built-in sum function to collapse NDDataArray
             collapsed_sum_for_mean = nddata_reshaped.sum(axis=spatial_axes, **kwargs)
@@ -433,10 +437,7 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
             )  # returns an NDDataArray
 
         # Convert to Spectrum, with the spectral axis in correct units:
-        if hasattr(spectral_cube.coords, 'spectral_wcs'):
-            target_wave_unit = spectral_cube.coords.spectral_wcs.world_axis_units[0]
-        else:
-            target_wave_unit = spectral_cube.coords.spectral.world_axis_units[0]
+        target_wave_unit = spectral_cube.coords.world_axis_units[2-self.spectral_axis_index]
 
         if target_wave_unit == '':
             target_wave_unit = 'pix'
@@ -445,11 +446,20 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
         mask = collapsed_nddata.mask
         uncertainty = collapsed_nddata.uncertainty
 
+        if pass_spectral_axis:
+            wcs_args = [0,0,0]
+            spec_indices = np.arange(spectral_cube.shape[self.spectral_axis_index])
+            wcs_args[self.spectral_axis_index] = spec_indices
+            wcs_args.reverse()
+            spectral_and_spatial = wcs.pixel_to_world(*wcs_args)
+            spectral_axis = [x for x in spectral_and_spatial if isinstance(x, SpectralCoord)][0]  # noqa
+
         collapsed_spec = _return_spectrum_with_correct_units(
             flux, wcs, collapsed_nddata.meta, 'flux',
             target_wave_unit=target_wave_unit,
             uncertainty=uncertainty,
-            mask=mask
+            mask=mask,
+            spectral_axis=spectral_axis
         )
         return collapsed_spec
 

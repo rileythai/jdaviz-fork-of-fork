@@ -446,6 +446,10 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
         mask = collapsed_nddata.mask
         uncertainty = collapsed_nddata.uncertainty
 
+        print(flux.shape)
+        print(flux)
+        print(mask)
+
         if pass_spectral_axis:
             wcs_args = [0,0,0]
             spec_indices = np.arange(spectral_cube.shape[self.spectral_axis_index])
@@ -453,6 +457,8 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
             wcs_args.reverse()
             spectral_and_spatial = wcs.pixel_to_world(*wcs_args)
             spectral_axis = [x for x in spectral_and_spatial if isinstance(x, SpectralCoord)][0]  # noqa
+
+        print(spectral_axis)
 
         collapsed_spec = _return_spectrum_with_correct_units(
             flux, wcs, collapsed_nddata.meta, 'flux',

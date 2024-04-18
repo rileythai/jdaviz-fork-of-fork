@@ -447,7 +447,7 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
         uncertainty = collapsed_nddata.uncertainty
 
         if pass_spectral_axis:
-            wcs_args = [0,0,0]
+            wcs_args = [0, 0, 0]
             spec_indices = np.arange(spectral_cube.shape[self.spectral_axis_index])
             wcs_args[self.spectral_axis_index] = spec_indices
             wcs_args.reverse()

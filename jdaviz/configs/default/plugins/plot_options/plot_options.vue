@@ -460,7 +460,15 @@
             v-model="image_colormap_value"
             label="Colormap"
             dense
-          ></v-select>
+          >
+            <template v-slot:selection="{ item, index }">
+                <span>{{ item.text }}</span>
+            </template>
+            <template v-slot:item="{ item }">
+                <span class="pr-6">{{ item.text }}</span>
+                <v-card :style=colorStyle(item, cmap_samples) class="ps-6">.</v-card>
+            </template>
+          </v-select>
               <v-alert v-if="image_colormap_value == 'Random' && (
                   stretch_function_value !== 'linear' || stretch_preset_value !== 100 ||
                   image_bias_value !== 0.5 || image_contrast_value !== 1.0
@@ -767,7 +775,7 @@ module.exports = {
     contour_custom_levels_set_value(e) {
       this.contour_custom_levels_txt = e
       this.contour_custom_levels_value = e.split(',').filter(n => n.trim().length).map(n => Number(n)).filter(n => !isNaN(n))
-    }
+    },
   },
 }
 </script>

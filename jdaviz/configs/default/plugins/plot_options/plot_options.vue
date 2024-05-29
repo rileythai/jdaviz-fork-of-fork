@@ -454,29 +454,29 @@
       <div v-if="image_visible_sync.in_subscribed_states && (image_visible_value || image_visible_sync['mixed'])">
         <glue-state-sync-wrapper v-if="image_color_mode_value === 'Colormaps' || image_color_mode_sync['mixed']" :sync="image_colormap_sync" :multiselect="layer_multiselect" @unmix-state="unmix_state('image_colormap')">
           <colormap-select
-            :items="image_colormap.choices"
+            :items="image_colormap_sync.choices"
             :image_colormap_sync="image_colormap_sync"
             :image_colormap_value="image_colormap_value"
             :cmap_samples="cmap_samples"
           >
           </colormap-select>
-              <v-alert v-if="image_colormap_value == 'Random' && (
-                  stretch_function_value !== 'linear' || stretch_preset_value !== 100 ||
-                  image_bias_value !== 0.5 || image_contrast_value !== 1.0
-                  )" type='warning' style="margin-left: -12px; margin-right: -12px">
-                For image segmentation maps, "Random" gives unique colors
-                only when the stretch percentile is min/max, stretch function
-                is linear, contrast is 1.0, and bias is 0.5. Click below
-                to choose these settings.
-                <v-row justify='end'>
-                <plugin-action-button
-                  :results_isolated_to_plugin="true"
-                  @click="image_segmentation_map_presets"
-                >
-                  Image segmentation map
-                </plugin-action-button>
-                </v-row>
-              </v-alert>
+          <v-alert v-if="image_colormap_value == 'Random' && (
+              stretch_function_value !== 'linear' || stretch_preset_value !== 100 ||
+              image_bias_value !== 0.5 || image_contrast_value !== 1.0
+              )" type='warning' style="margin-left: -12px; margin-right: -12px">
+            For image segmentation maps, "Random" gives unique colors
+            only when the stretch percentile is min/max, stretch function
+            is linear, contrast is 1.0, and bias is 0.5. Click below
+            to choose these settings.
+            <v-row justify='end'>
+            <plugin-action-button
+              :results_isolated_to_plugin="true"
+              @click="image_segmentation_map_presets"
+            >
+              Image segmentation map
+            </plugin-action-button>
+            </v-row>
+          </v-alert>
 
         </glue-state-sync-wrapper>
         <glue-state-sync-wrapper v-if="image_color_mode_value !== 'Colormaps' || image_color_mode_sync['mixed']" :sync="image_color_sync" :multiselect="layer_multiselect" @unmix-state="unmix_state('image_color')">

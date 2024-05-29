@@ -8,11 +8,11 @@
     dense
   >
     <template v-slot:selection="{ item, index }">
-      <span>{{ item }}</span>
+      <span>{{ item.text }}</span>
     </template>
     <template v-slot:item="{ item }">
-      <span class="pr-6">{{ item }}</span>
-      <v-card :style=colorStyle(item, cmap_samples) class="ps-6">.</v-card>
+      <span class="pr-6">{{ item.text }}</span>
+
     </template>
   </v-select>
 </template>
@@ -26,7 +26,7 @@ module.exports = {
       var colors = []
       var style = 'repeating-linear-gradient( 135deg, '
 
-      colors = this.$props.cmap_samples[item]
+      colors = this.$props.cmap_samples[item.text]
 
       cmap_strip_width = strip_width / colors.length
       for ([ci, color] of colors.entries()) {

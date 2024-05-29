@@ -454,8 +454,10 @@
       <div v-if="image_visible_sync.in_subscribed_states && (image_visible_value || image_visible_sync['mixed'])">
         <glue-state-sync-wrapper v-if="image_color_mode_value === 'Colormaps' || image_color_mode_sync['mixed']" :sync="image_colormap_sync" :multiselect="layer_multiselect" @unmix-state="unmix_state('image_colormap')">
           <colormap-select
+            :items="image_colormap.choices"
             :image_colormap_sync="image_colormap_sync"
             :image_colormap_value="image_colormap_value"
+            :cmap_samples="cmap_samples"
           >
           </colormap-select>
               <v-alert v-if="image_colormap_value == 'Random' && (

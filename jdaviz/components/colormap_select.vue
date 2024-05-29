@@ -2,16 +2,16 @@
   <v-select
     attach
     :menu-props="{ left: true }"
-    :items="image_colormap_sync.choices"
+    :items="items"
     v-model="image_colormap_value"
     label="Colormap"
     dense
   >
     <template v-slot:selection="{ item, index }">
-      <span>{{ item.text }}</span>
+      <span>{{ item }}</span>
     </template>
     <template v-slot:item="{ item }">
-      <span class="pr-6">{{ item.text }}</span>
+      <span class="pr-6">{{ item }}</span>
       <v-card :style=colorStyle(item, cmap_samples) class="ps-6">.</v-card>
     </template>
   </v-select>
@@ -26,12 +26,12 @@ module.exports = {
       var colors = []
       var style = 'repeating-linear-gradient( 135deg, '
 
-      colors = cmap_samples[item.text]
+      colors = this.$props.cmap_samples[item]
 
       cmap_strip_width = strip_width / colors.length
       for ([ci, color] of colors.entries()) {
-        var start = mi*strip_width + ci*cmap_strip_width
-        var end = mi*strip_width+(ci+1)*cmap_strip_width
+        var start = ci*cmap_strip_width
+        var end = (ci+1)*cmap_strip_width
         style += color + ' '+start+'px, ' + color + ' '+end+'px'
         if (ci !== colors.length-1) {
           style += ', '

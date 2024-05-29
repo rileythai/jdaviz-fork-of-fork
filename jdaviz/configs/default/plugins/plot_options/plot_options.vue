@@ -453,22 +453,11 @@
 
       <div v-if="image_visible_sync.in_subscribed_states && (image_visible_value || image_visible_sync['mixed'])">
         <glue-state-sync-wrapper v-if="image_color_mode_value === 'Colormaps' || image_color_mode_sync['mixed']" :sync="image_colormap_sync" :multiselect="layer_multiselect" @unmix-state="unmix_state('image_colormap')">
-          <v-select
-            attach
-            :menu-props="{ left: true }"
-            :items="image_colormap_sync.choices"
-            v-model="image_colormap_value"
-            label="Colormap"
-            dense
+          <colormap-select
+            :image_colormap_sync="image_colormap_sync"
+            :image_colormap_value="image_colormap_value"
           >
-            <template v-slot:selection="{ item, index }">
-                <span>{{ item.text }}</span>
-            </template>
-            <template v-slot:item="{ item }">
-                <span class="pr-6">{{ item.text }}</span>
-                <v-card :style=colorStyle(item, cmap_samples) class="ps-6">.</v-card>
-            </template>
-          </v-select>
+          </colormap-select>
               <v-alert v-if="image_colormap_value == 'Random' && (
                   stretch_function_value !== 'linear' || stretch_preset_value !== 100 ||
                   image_bias_value !== 0.5 || image_contrast_value !== 1.0

@@ -1,23 +1,25 @@
-<v-select
-  attach
-  :menu-props="{ left: true }"
-  :items="image_colormap_sync.choices"
-  v-model="image_colormap_value"
-  label="Colormap"
-  dense
->
-  <template v-slot:selection="{ item, index }">
-    <span>{{ item.text }}</span>
-  </template>
-  <template v-slot:item="{ item }">
-    <span class="pr-6">{{ item.text }}</span>
-    <v-card :style=colorStyle(item, cmap_samples) class="ps-6">.</v-card>
-  </template>
-</v-select>
+<template>
+  <v-select
+    attach
+    :menu-props="{ left: true }"
+    :items="image_colormap_sync.choices"
+    v-model="image_colormap_value"
+    label="Colormap"
+    dense
+  >
+    <template v-slot:selection="{ item, index }">
+      <span>{{ item.text }}</span>
+    </template>
+    <template v-slot:item="{ item }">
+      <span class="pr-6">{{ item.text }}</span>
+      <v-card :style=colorStyle(item, cmap_samples) class="ps-6">.</v-card>
+    </template>
+  </v-select>
+</template>
 
 <script>
 module.exports = {
-  props: ['items', 'cmap_samples'],
+  props: ['items', 'cmap_samples', 'image_colormap_sync', 'image_colormap_value'],
   methods: {
     colorStyle(item, cmap_samples) {
       var cmap_strip_width = 1

@@ -110,7 +110,7 @@ class Specviz(ConfigHelper, LineListMixin):
                         isinstance(all_subsets[lyr.label], SpectralRegion)):
                     spectrum = get_data_method(data_label=lyr.data.label,
                                                spectral_subset=lyr.label,
-                                               cls=Spectrum1D)
+                                               cls=Spectrum)
                     spectra[f'{lyr.data.label} ({lyr.label})'] = spectrum
                 else:
                     spectrum = get_data_method(data_label=lyr.label,

@@ -316,7 +316,7 @@ def _parse_spectrum1d_3d(app, file_obj, data_label=None,
 
         if parent is not None:
             parent_data_label = parent
-        elif ext == 'DQ':
+        elif attr == 'uncertainty':
             parent_data_label = app.return_data_label(data_label, "FLUX")
         else:
             parent_data_label = None
@@ -334,7 +334,8 @@ def _parse_spectrum1d_3d(app, file_obj, data_label=None,
             if hasattr(file_obj, 'wcs'):
                 meta['_orig_spatial_wcs'] = _get_celestial_wcs(file_obj.wcs)
 
-            s1d = Spectrum(flux=flux, wcs=file_obj.wcs, meta=meta)
+            s1d = Spectrum(flux=flux, wcs=file_obj.wcs, meta=meta,
+                           spectral_axis_index=file_obj.spectral_axis_index)
 
         cur_data_label = app.return_data_label(data_label, attr.upper())
         app.add_data(s1d, cur_data_label, parent=parent_data_label)

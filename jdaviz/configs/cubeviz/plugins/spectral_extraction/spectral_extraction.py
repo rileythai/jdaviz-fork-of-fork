@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import astropy
+from astropy.coordinates import SpectralCoord
 from astropy.nddata import (
     NDDataArray, StdDevUncertainty
 )
@@ -400,7 +401,8 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
         elif hasattr(spectral_cube.coords, 'spectral'):
             wcs = spectral_cube.coords.spectral
         else:
-            wcs = None
+            wcs = spectral_cube.coords
+            pass_spectral_axis=True
 
         # Filter out NaNs (False = good)
         mask = np.logical_or(mask, np.isnan(flux))
@@ -437,7 +439,10 @@ class SpectralExtraction(PluginTemplateMixin, ApertureSubsetSelectMixin,
             )  # returns an NDDataArray
 
         # Convert to Spectrum, with the spectral axis in correct units:
-        target_wave_unit = spectral_cube.coords.world_axis_units[2-self.spectral_axis_index]
+        if hasattr(spectral_cube.coords, 'spectral_wcs'):
+            target_wave_unit = spectral_cube.coords.spectral_wcs.world_axis_units[2-self.spectral_axis_index]
+        else:
+            target_wave_unit = spectral_cube.coords.world_axis_units[2-self.spectral_axis_index]
 
         if target_wave_unit == '':
             target_wave_unit = 'pix'

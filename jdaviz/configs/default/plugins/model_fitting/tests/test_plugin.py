@@ -162,7 +162,7 @@ def test_register_cube_model(cubeviz_helper, spectrum1d_cube):
 def test_fit_cube_no_wcs(cubeviz_helper):
     # This is like when user do something to a cube outside of Jdaviz
     # and then load it back into a new instance of Cubeviz for further analysis.
-    sp = Spectrum(flux=np.ones((7, 8, 9)) * u.nJy)  # ny, nx, nz
+    sp = Spectrum(flux=np.ones((7, 8, 9)) * u.nJy, spectral_axis_index=2)  # ny, nx, nz
     cubeviz_helper.load_data(sp, data_label="test_cube")
     mf = cubeviz_helper.plugins['Model Fitting']
     mf.create_model_component('Linear1D')

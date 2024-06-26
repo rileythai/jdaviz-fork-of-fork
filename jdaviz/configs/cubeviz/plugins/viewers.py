@@ -70,7 +70,7 @@ class WithSliceIndicator:
 
 
 class WithSliceSelection:
-    @cached_property
+    @property
     def slice_index(self):
         # index in state.slices corresponding to the slice axis
         for layer in self.layers:
@@ -127,6 +127,7 @@ class WithSliceSelection:
 
             # Convert to display units if applicable
             data_units = getattr(data_comp, 'units', None)
+
             if slice_display_units and data_units and slice_display_units != data_units:
                 converted_axis = (data * u.Unit(data_units)).to_value(
                     slice_display_units,

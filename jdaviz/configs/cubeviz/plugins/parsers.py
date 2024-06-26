@@ -95,7 +95,6 @@ def parse_data(app, file_obj, data_type=None, data_label=None,
             _parse_spectrum1d_3d(
                 app, sc, data_label=data_label,
                 flux_viewer_reference_name=flux_viewer_reference_name,
-                spectrum_viewer_reference_name=spectrum_viewer_reference_name,
                 uncert_viewer_reference_name=uncert_viewer_reference_name
             )
             app.get_tray_item_from_name("Spectral Extraction").disabled_msg = ""
@@ -118,7 +117,6 @@ def parse_data(app, file_obj, data_type=None, data_label=None,
                 _parse_spectrum1d_3d(
                                     app, sc, data_label=data_label,
                                     flux_viewer_reference_name=flux_viewer_reference_name,
-                                    spectrum_viewer_reference_name=spectrum_viewer_reference_name,
                                     uncert_viewer_reference_name=uncert_viewer_reference_name
                                     )
             else:
@@ -134,7 +132,6 @@ def parse_data(app, file_obj, data_type=None, data_label=None,
     #  into something glue can understand.
     elif isinstance(file_obj, Spectrum) and file_obj.flux.ndim in (1, 3):
         if file_obj.flux.ndim == 3:
-            print("Parsing 3D Spectrum")
             _parse_spectrum1d_3d(
                 app, file_obj, data_label=data_label,
                 flux_viewer_reference_name=flux_viewer_reference_name,
@@ -317,7 +314,7 @@ def _parse_spectrum1d_3d(app, file_obj, data_label=None,
         if parent is not None:
             parent_data_label = parent
         elif attr == 'uncertainty':
-            parent_data_label = app.return_data_label(data_label, "FLUX")
+            parent_data_label = app.return_data_label(data_label, "FLUX").split(" ")[0]
         else:
             parent_data_label = None
 

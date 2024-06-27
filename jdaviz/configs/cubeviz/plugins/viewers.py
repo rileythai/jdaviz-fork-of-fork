@@ -76,6 +76,9 @@ class WithSliceSelection:
         for layer in self.layers:
             try:
                 data_obj = layer.layer.data
+                # Need to skip layers that are 2D and don't have a spectral axis
+                if "spectral_axis_index" not in data_obj.meta:
+                    continue
                 return data_obj.meta['spectral_axis_index']
             except (AttributeError, KeyError):
                 raise
@@ -107,7 +110,7 @@ class WithSliceSelection:
         converted_axis = np.array([])
         for layer in self.layers:
             world_comp_ids = layer.layer.data.world_component_ids
-            if self.slice_index >= len(world_comp_ids):
+            if len(world_comp_ids) == 2:
                 # Case where 2D image is loaded in image viewer
                 continue
 

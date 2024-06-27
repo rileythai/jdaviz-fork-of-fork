@@ -487,7 +487,8 @@ class ConfigHelper(HubListener):
                                   flux=data.flux.to(flux_unit,
                                                     u.spectral_density(data.spectral_axis)),
                                   uncertainty=new_uncert,
-                                  mask=data.mask)
+                                  mask=data.mask,
+                                  spectral_axis_index=data.meta['spectral_axis_index'])
             else:  # pragma: nocover
                 raise NotImplementedError(f"converting {data.__class__.__name__} to display units is not supported")  # noqa
         return data

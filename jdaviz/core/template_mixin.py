@@ -2954,6 +2954,7 @@ class SpectralContinuumMixin(VuetifyTemplate, HubListener):
             return None, None, None
 
         spectral_axis = full_spectrum.spectral_axis
+        spectral_axis_index = full_spectrum.spectral_axis_index
         if spectral_axis.unit == u.pix:
             # plugin should be disabled so not get this far, but can still get here
             # before the disabled message is set
@@ -3058,18 +3059,19 @@ class SpectralContinuumMixin(VuetifyTemplate, HubListener):
         min_x = min(spectral_axis.value)
         if per_pixel:
             # full_spectrum.flux is a cube, so we want to act on all spaxels independently
-            continuum_y = full_spectrum.flux[:, :, continuum_mask].value
+            continuum_y = np.take(full_spectrum.flux, continuum_mask, axis=spectral_axis_index).value
 
             def fit_continuum(continuum_y_spaxel):
                 return np.polyfit(continuum_x-min_x, continuum_y_spaxel, deg=1)
 
             # compute the linear fit for each spaxel independently, along the spectral axis
-            slopes_intercepts = np.apply_along_axis(fit_continuum, 2, continuum_y)
-            slopes = slopes_intercepts[:, :, 0]
-            intercepts = slopes_intercepts[:, :, 1]
+            slopes_intercepts = np.apply_along_axis(fit_continuum, spectral_axis_index, continuum_y)
+            slopes = np.take(slopes_intercepts, 0, spectral_axis_index)
+            intercepts = np.take(slopes_intercepts, 1, spectral_axis_index)
 
             # spectrum.spectral_axis is an array, but we need our continuum to have the same
             # shape as the fluxes in the cube, so let's just duplicate to the correct shape
+            print(spectrum.flux.shape)
             spectral_axis_cube = np.zeros(spectrum.flux.shape)
             spectral_axis_cube[:, :] = spectrum.spectral_axis.value
 
